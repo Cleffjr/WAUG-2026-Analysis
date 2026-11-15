@@ -3,9 +3,15 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
+import requests
 import streamlit as st
 
-st.set_page_config(page_title="WAUG 2026|West African University Games,OAU Ile-Ife", page_icon="waug-2026-logo.png", layout="wide")
+st.set_page_config(
+     page_title="WAUG 2026|West African University Games,OAU Ile-Ife",
+     page_icon="waug-2026-logo.png",
+     layout="wide",
+     initial_sidebar_state="expanded"
+)
 
 HERE = Path(__file__).resolve().parent
 # Run from the folder that holds the CSVs: next to app.py, or inside a "data" subfolder
@@ -15,28 +21,192 @@ if not Path("medal_table.csv").exists() and Path("data", "medal_table.csv").exis
 
 GOLD, SILVER, BRONZE = "#D4AF37", "#A8A9AD", "#CD7F32"
 MEDAL_COLORS = {"Gold": GOLD, "Silver": SILVER, "Bronze": BRONZE}
+# ---------- data layer: AlliSports Data API (with a saved snapshot as fallback) ----------
+API_BASE = os.environ.get("ALLISPORTS_BASE", "https://data.allimediahub.com").rstrip("/")
+SERIES, EDITION = "waug", "2026"
+GENDER = {"men": "Men", "women": "Women", "mixed": "Mixed"}
+CATEGORY_OLD = {"Men": "Male", "Women": "Female", "Mixed": "Mixed", "Other": "Other"}
+COUNTRY_NAMES = {"NG": "Nigeria", "GH": "Ghana"}
+SPORT_CODES = {"FBL": "Football", "BKB": "Basketball"}
+# only used for the saved snapshot, when the live feed cannot be reached
 GHANA = {"University of Ghana", "University of Cape Coast", "Kwame Nkrumah University of Science and Technology",
          "University for Development Studies", "University of Energy and Natural Resources"}
 
 
-@st.cache_data
-def load_matches():
-    m = pd.read_csv("matches.csv", dtype={"sets": str}).fillna({"sets": ""})
-    m["date"] = pd.to_datetime(m.date)
-    return m
+class ApiNotFound(RuntimeError):
+    pass
 
 
-@st.cache_data
-def load():
+def api_key():
+    """The key lives in .streamlit/secrets.toml (ALLISPORTS_KEY) or an environment variable, never in the code."""
+    try:
+        key = st.secrets["ALLISPORTS_KEY"]
+    except Exception:
+        key = None
+    return key or os.environ.get("ALLISPORTS_KEY")
+
+
+def api_get(path, **params):
+    key = api_key()
+    if not key:
+        raise RuntimeError("no API key found: add ALLISPORTS_KEY to .streamlit/secrets.toml")
+    r = requests.get(f"{API_BASE}/api/{SERIES}/{EDITION}/{path}", headers={"x-api-key": key}, timeout=20,
+                     params={k: v for k, v in params.items() if v is not None})
+    if r.status_code == 401:
+        raise RuntimeError("the API key was rejected (401)")
+    if r.status_code == 404:
+        raise ApiNotFound(path)
+    if r.status_code == 429:
+        raise RuntimeError(f"rate limit reached, retry in {r.headers.get('Retry-After', '60')} seconds")
+    r.raise_for_status()
+    return r.json()
+
+
+def from_api():
+    mt = api_get("medal-table")
+    rs = api_get("results")
+    table = pd.DataFrame([{
+        "rank": r["rank"], "university": r["university"]["name"], "abbr": r["university"]["code"],
+        "gold": r["medals"]["gold"], "silver": r["medals"]["silver"], "bronze": r["medals"]["bronze"],
+        "total": r["medals"]["total"], "provisional": r.get("provisionalMedals", 0),
+        "country": COUNTRY_NAMES.get(r["university"].get("country"), r["university"].get("country") or "Other")}
+        for r in mt["data"]["rows"]])
+    det_rows, ev_rows = [], []
+    for e in rs["data"]:
+        res = e.get("result")
+        if not res or not e.get("countsInMedals", True) or res.get("status") == "disputed":
+            continue
+        cat3 = GENDER.get(e.get("gender"), "Other")
+        name = e["category"]
+        label = f"{cat3} {name}" if cat3 != "Other" else name
+        slots = {}
+        for m in res.get("medals", []):
+            slots[m["slot"]] = m["university"]["name"]
+            athlete = m.get("athleteName") or ("Team" if e.get("kind") == "team" else "–")
+            det_rows.append(dict(university=m["university"]["name"], abbr=m["university"]["code"], medal=m["colour"].capitalize(),
+                                 sport=e["sport"]["name"], event=label, event_name=name, cat3=cat3, category=CATEGORY_OLD[cat3],
+                                 athlete=athlete, status=res.get("status", "")))
+        ev_rows.append({"Sport": e["sport"]["name"], "Event": name, "Category": CATEGORY_OLD[cat3], "Gold": slots.get("gold", ""),
+                        "Silver": slots.get("silver", ""), "Bronze I": slots.get("bronze_1") or slots.get("bronze", ""),
+                        "Bronze II": slots.get("bronze_2", ""), "Updated Timestamp": res.get("updatedAt", ""), "Status": res.get("status", "")})
+    det = pd.DataFrame(det_rows)
+    det["country"] = det.university.map(table.set_index("university").country).fillna("Other")
+    meta = {"source": "api", "generatedAt": rs.get("generatedAt", ""), "includesProvisional": bool(rs.get("includesProvisional")), "error": None}
+    return table, det, pd.DataFrame(ev_rows), meta
+
+
+def from_csv(err):
     table = pd.read_csv("medal_table.csv")
     det = pd.read_csv("medal_details.csv")
     ev = pd.read_csv("event_results.csv", encoding="utf-8-sig")
     country = lambda u: "Ghana" if u in GHANA else "Nigeria"
     table["country"] = table.university.map(country)
     det["country"] = det.university.map(country)
-    det["category"] = det.event.str.split().str[0].map({"Men": "Male", "Women": "Female", "Mixed": "Mixed"}).fillna("Other")
+    det["abbr"] = det.university.map(table.set_index("university").abbr)
+    first = det.event.str.split().str[0]
+    det["cat3"] = first.where(first.isin(["Men", "Women", "Mixed"]), "Other")
+    det["category"] = det.cat3.map(CATEGORY_OLD)
+    det["event_name"] = det.event.where(det.cat3 == "Other", det.event.str.split(n=1).str[1])
+    ev["Status"] = "snapshot"
+    return table, det, ev, {"source": "snapshot", "generatedAt": "", "includesProvisional": False, "error": err}
+
+
+@st.cache_data(ttl=60, show_spinner="Loading data from AlliSports Data…")
+def load():
+    """Medal table, medals (with athletes) and events: live from the API, or from the saved snapshot if the API fails."""
+    try:
+        table, det, ev, meta = from_api()
+    except Exception as err:
+        try:
+            table, det, ev, meta = from_csv(str(err))
+        except Exception:
+            raise RuntimeError(f"Could not load data from the API ({err}) and no saved snapshot was found.")
     det["medal"] = pd.Categorical(det.medal, ["Gold", "Silver", "Bronze"], ordered=True)
-    return table, det, ev
+    return table, det, ev, meta
+
+
+def build_winners(det):
+    """One row per event with the gold, silver and bronze winners ('Name (UNI)')."""
+    d = det.copy()
+    d["medal"] = d.medal.astype(str)
+    who = d.athlete.fillna("–").replace({"–": "Name not listed"})
+    d["label"] = who + " (" + d.abbr + ")"
+    return (d.groupby(["sport", "cat3", "event_name", "medal"])["label"].agg("; ".join).unstack("medal")
+              .reindex(columns=["Gold", "Silver", "Bronze"]).fillna("").reset_index()
+              .rename(columns={"cat3": "category", "event_name": "event", "Gold": "gold", "Silver": "silver", "Bronze": "bronze"}))
+
+
+MATCH_COLS = ["date", "time", "sport", "category", "event_name", "stage", "team_a", "uni_a", "score_a", "team_b", "uni_b", "score_b",
+              "sets", "pens_a", "pens_b", "winner", "status", "venue", "match_id", "event_id", "source"]
+
+
+def from_api_matches():
+    names = dict(SPORT_CODES)
+    try:
+        names.update({x["code"]: x["name"] for x in api_get("sports")["data"]})
+    except Exception:
+        pass
+    resp = api_get("matches")
+    rows = []
+    for m in resp["data"]["matches"]:
+        sport = names.get(m.get("sport"), m.get("sport"))
+        evn = m.get("event") or ""
+        cat = "Men" if evn.startswith("Men") else "Women" if evn.startswith("Women") else "Mixed"
+        local = pd.to_datetime(m.get("startsAt"), utc=True, errors="coerce") + pd.Timedelta(hours=1)   # Nigeria time (WAT)
+        sc = m.get("score") or m.get("awarded") or {}
+        pen = m.get("penalties") or {}
+        ps = m.get("periodScores") or []
+        if ps:
+            sets = " ".join(f"{p['period']} {p['home']}-{p['away']}" for p in ps)
+        elif m.get("halfTime"):
+            sets = f"HT {m['halfTime']['home']}-{m['halfTime']['away']}"
+        else:
+            sets = ""
+        if m.get("extraTime"):
+            sets = (sets + " · extra time").strip(" ·")
+        rows.append(dict(
+            date=local.tz_localize(None).normalize() if pd.notna(local) else pd.NaT,
+            time=local.strftime("%H:%M") if pd.notna(local) else "", sport=sport, category=cat, event_name=evn,
+            stage=m.get("phase") or "", team_a=m["home"]["name"], uni_a=m["home"]["code"], score_a=sc.get("home"),
+            team_b=m["away"]["name"], uni_b=m["away"]["code"], score_b=sc.get("away"), sets=sets,
+            pens_a=pen.get("home"), pens_b=pen.get("away"), winner={"home": "A", "away": "B"}.get(m.get("winner")),
+            status=m.get("status", "scheduled"), venue=m.get("venue") or "", match_id=m.get("id"), event_id=m.get("eventId"), source="api"))
+    df = pd.DataFrame(rows, columns=MATCH_COLS)
+    return df, {"generatedAt": resp.get("generatedAt", ""), "includesProvisional": bool(resp.get("includesProvisional"))}
+
+
+def read_snapshot_matches():
+    if not Path("matches.csv").exists():
+        return pd.DataFrame(columns=MATCH_COLS)
+    m = pd.read_csv("matches.csv", dtype={"sets": str}).fillna({"sets": ""})
+    m["date"] = pd.to_datetime(m.date)
+    m["time"], m["status"], m["venue"] = "", "finished", ""
+    m["match_id"], m["event_id"], m["source"] = None, None, "snapshot"
+    m["event_name"] = m.category + "'s " + m.sport.str.lower()
+    return m[MATCH_COLS]
+
+
+@st.cache_data(ttl=30, show_spinner=False)
+def load_matches():
+    """Matches: live from the API (football and basketball). Sports the feed does not carry come from the saved snapshot."""
+    meta = {"error": None, "generatedAt": "", "includesProvisional": False}
+    api = None
+    try:
+        api, info = from_api_matches()
+        meta.update(info)
+    except Exception as err:
+        meta["error"] = str(err)
+    snap = read_snapshot_matches()
+    if api is not None and not api.empty:
+        snap = snap[~snap.sport.isin(api.sport.unique())]
+    parts = [x for x in (api, snap) if x is not None and not x.empty]
+    df = pd.concat(parts, ignore_index=True) if parts else pd.DataFrame(columns=MATCH_COLS)
+    return df, meta
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def load_competition(event_id):
+    return api_get(f"events/{event_id}/competition")
 
 
 BASE = "https://waug.oauife.edu.ng/"
@@ -130,7 +300,7 @@ def home():
     <div class="wg"><section class="wg-hero"><div>
       <span class="wg-eyebrow">2–12 October 2026 | Obafemi Awolowo University, Ile-Ife</span>
       <div class="wg-h1">West African University Games 2026</div>
-      <p>University sport. Regional pride. One West Africa. WAUG 2026 brings student-athletes, officials, and institutions
+      <p>University sport. Regional pride. One West Africa. WAUG 2026 brought student-athletes, officials, and institutions
       to Ile-Ife for ten days of competition, culture, friendship, and fair play.</p>
     </div><div class="wg-blob"><img src="{IMG}waug-2026-landing-mascot.png" alt="WAUG 2026 mascot holding a torch"></div></section>
     <div class="wg-strip"><div><b>2–12 Oct</b><span>Games Dates</span></div><div><b>Ile-Ife</b><span>Host City</span></div>
@@ -138,9 +308,12 @@ def home():
     """)
 
     # ---- results at a glance (from the app's own data) ----
-    if Path("medal_table.csv").exists():
-        table_, _, ev_ = load()
-        n_matches = len(load_matches()) if Path("matches.csv").exists() else "–"
+    try:
+        table_, _, ev_, _ = load()
+        n_matches = len(load_matches()[0])
+    except Exception:
+        table_ = None
+    if table_ is not None:
         section("Results at a glance", "The Games in numbers", "Calculated from the data loaded in this dashboard.")
         html(f"""<div class="wg"><div class="wg-nums">
         <div><b>{int(table_.total.sum())}</b><span>Medals awarded</span></div><div><b>{len(ev_)}</b><span>Medal events</span></div>
@@ -159,23 +332,23 @@ def home():
     section("Official Announcement", "15th West Africa University Games")
     a, b = st.columns([2, 3])
     a.image(IMG + "waug-2026-announcement.jpeg", caption="Official announcement poster")
-    b.write("WAUG 2026 is coming to Obafemi Awolowo University, Ile-Ife, Nigeria, from 2 to 12 October 2026, bringing universities "
+    b.write("WAUG 2026 took place at Obafemi Awolowo University, Ile-Ife, Nigeria, from 2 to 12 October 2026, bringing universities "
             "across West Africa together under one regional sporting spirit.")
 
     # ---- about ----
     section("About WAUG 2026", "Where West Africa Meets Through University Sport")
     a, b = st.columns([2, 3])
     a.image(IMG + "waug-2026-mascot.jpeg", caption="Official mascot in blue and gold sportswear")
-    b.write("WAUG 2026 brings university communities together through disciplined competition and a shared commitment to the "
+    b.write("WAUG 2026 brought university communities together through disciplined competition and a shared commitment to the "
             "development of student-athletes across West Africa.")
-    b.write("Hosted by Obafemi Awolowo University from 2 to 12 October 2026, the Games place sporting excellence alongside education, "
+    b.write("Hosted by Obafemi Awolowo University from 2 to 12 October 2026, the Games placed sporting excellence alongside education, "
             "culture, respect, and regional cooperation.")
-    b.write("The newly approved mascot and logo present the Games as both a modern sporting event and a proud expression of "
+    b.write("The mascot and logo presented the Games as both a modern sporting event and a proud expression of "
             "Yoruba heritage in Ile-Ife.")
 
     # ---- mascot & logo ----
     section("Mascot & Logo Approved", "A Cultural Emblem for a Regional Games")
-    st.write("The Local Organising Committee has officially approved the WAUG 2026 mascot and logo, marking a major step in "
+    st.write("The Local Organising Committee officially approved the WAUG 2026 mascot and logo, a major step in "
              "preparations for the Games at Obafemi Awolowo University, Ile-Ife.")
     st.write("The mascot draws from West African culture and the Yoruba heritage of Ile-Ife. It features the Olokun head, a symbol of "
              "wealth, prosperity, and the sea in Yoruba mythology, with the Opele divination chain and cowries adding meanings of "
@@ -186,7 +359,7 @@ def home():
 
     # ---- host ----
     section("The Host", "Obafemi Awolowo University, Ile-Ife",
-            "Set within one of Nigeria's most distinguished university communities, WAUG 2026 carries the formal character of a major "
+            "Set within one of Nigeria's most distinguished university communities, WAUG 2026 carried the formal character of a major "
             "academic occasion while delivering the energy of regional sport and the cultural depth of Ile-Ife.")
     rows = [("01", "Academic Setting", "A university environment shaped by scholarship, leadership, culture, and public service."),
             ("02", "Regional Welcome", "An invitation to universities across West Africa to gather in friendship, shared heritage, and disciplined competition."),
@@ -195,13 +368,13 @@ def home():
 
     # ---- sports ----
     section("Sports Disciplines", "A Broad Programme of Competition",
-            "Athletes are expected to compete across a broad programme that may include athletics, football, basketball, swimming, "
+            "Athletes competed across a broad programme that included athletics, football, basketball, swimming, "
             "and other individual and team events.")
     html('<div class="wg"><div class="wg-chips">' + "".join(f'<span class="wg-chip">{e} {n}</span>' for e, n in SPORTS) + "</div></div>")
 
     # ---- countries ----
     section("Participating Countries", "West Africa Represented at WAUG 2026",
-            "Universities and student-athletes from across West Africa are expected in Ile-Ife for the Games.")
+            "Universities and student-athletes from across West Africa were expected in Ile-Ife for the Games.")
     html('<div class="wg"><div class="wg-chips">' + "".join(
         f'<span class="wg-chip c"><img src="https://flagcdn.com/w80/{c}.png" alt="Flag of {n}">{n}</span>' for c, n in COUNTRIES) + "</div></div>")
 
@@ -219,19 +392,15 @@ def home():
     """)
 
 
-@st.cache_data
-def load_winners():
-    return pd.read_csv("event_winners.csv" if Path("event_winners.csv").exists() else "data/event_winners.csv").fillna("")
-
-
 def winners_tab():
-    if not (Path("event_winners.csv").exists() or Path("data/event_winners.csv").exists()):
-        st.error("event_winners.csv not found. Put it in the same folder as app.py.")
+    try:
+        w = build_winners(load()[1])
+    except Exception as err:
+        st.error(f"Could not load the winners: {err}")
         return
-    w = load_winners()
 
     st.subheader("Event winners")
-    st.write("Who stood on the podium in every event, from the official medal table with winners.")
+    st.write("Who stood on the podium in every event, from the AlliSports Data results.")
     c = st.columns(4)
     sport = c[0].multiselect("Sport", sorted(w.sport.unique()), key="w_sport")
     cat = c[1].multiselect("Category", ["Men", "Women", "Mixed"], key="w_cat")
@@ -255,8 +424,8 @@ def winners_tab():
                              "gold": "🥇 Gold", "silver": "🥈 Silver", "bronze": "🥉 Bronze"})
     st.dataframe(show, hide_index=True, width="stretch", height=560)
     st.caption("Each entry shows the athlete and their university. Team events show \"Team\" because the official table lists no names; "
-               "where two bronze medals were awarded in an event, both are shown. Four events have no silver medal. "
-               "Official results only, as last updated 27 Oct 2026.")
+               "where two bronze medals were awarded in an event, both are shown. "
+               "Provisional results are not yet confirmed by the WAUG Technical Committee. Data: AlliSports Data.")
     st.download_button("Download event winners (CSV)", v.to_csv(index=False), "waug_2026_event_winners.csv", "text/csv")
 
 
@@ -274,7 +443,8 @@ ABOUT_CSS = """
 .wg-role h4{margin:0 0 .15rem;font-size:1.1rem}
 .wg-role .t{opacity:.75;font-size:.92rem;margin-bottom:.5rem}
 .wg-role p{margin:0;opacity:.85}
-.wg-role+.wg-role .r{}
+.wg-sub a{color:#B88700;text-decoration:underline !important;font-weight:600}
+.wg-foot a{color:#FFD34D !important;text-decoration:underline !important}
 @media(max-width:800px){.wg-partners{grid-template-columns:1fr}.wg-role{grid-template-columns:1fr;gap:.3rem}.wg-band .wg-h1{font-size:2rem}}
 </style>
 """
@@ -316,17 +486,20 @@ def about():
         for r, n, t, d in roles) + "</div>")
 
     section("Data & methodology", "Where the numbers come from",
-            "Data extracted from waug.oauife.edu.ng and data.allimediahub.com (AlliSports Data).")
+            "Data: AlliSports Data (data.allimediahub.com). Official WAUG website: <a href='https://waug.oauife.edu.ng' target='_blank' rel='noopener noreferrer'>waug.oauife.edu.ng</a>.")
     items = [
-        ("Medal table and winners", "The medal counts and the athletes who won gold, silver and bronze come from the official medal table "
-         "with winners, last updated 27 October 2026. It lists 478 medals (156 gold, 152 silver, 170 bronze) across 23 universities."),
-        ("Event results", "The event-by-event results record the winning universities in 156 events across 14 sports, "
-         "with updates timestamped between 9 and 27 October 2026. Its per-university totals match the medal table."),
-        ("Match scorelines", "The matches tab covers 145 matches played from 5 to 11 October 2026, taken from the AlliSports Data results. "
-         "Results are provisional until confirmed by the referee or the WAUG Technical Committee."),
-        ("Ranking", "Universities are ranked by gold medals first, then silver, then bronze."),
-        ("Known limits", "Team events list no athlete names in the official table, and some athlete names are spelled in more than one way, "
-         "so athlete counts may be slightly low. Four events have no silver medal."),
+        ("Data credit", "All results, medal counts, winners and match scorelines on this dashboard are provided by AlliSports Data "
+         "(Alli Media Hub), at data.allimediahub.com."),
+        ("Live feed", "The medal table, event results, winners and match scorelines are loaded from the AlliSports Data feed and "
+         "refreshed about every minute. The medal table is calculated from the recorded results."),
+        ("Result status", "Provisional results were entered at the venue and are not yet confirmed. Official results are confirmed by "
+         "the WAUG Technical Committee. Disputed events are left out of the medal table until settled."),
+        ("Ranking", "Universities are ranked by gold medals first, then silver, then bronze. Universities with the same medals share "
+         "a rank and the next rank is skipped (1, 1, 3)."),
+        ("Matches", "Football and basketball matches come from the feed, with scores and group tables. Matches in sports the "
+         "feed does not carry yet, such as tennis, table tennis and badminton, come from a saved snapshot of results for 5 to 11 October 2026."),
+        ("Known limits", "Team events list no athlete names, and athlete names are spelled as recorded, so an athlete's count may be "
+         "slightly low. If the feed is unavailable, the dashboard shows a saved copy of the results."),
     ]
     html('<div class="wg">' + "".join(
         f'<div class="wg-role"><div class="r">{t}</div><div><p>{d}</p></div></div>' for t, d in items) + "</div>")
@@ -335,16 +508,151 @@ def about():
     html("""
     <div class="wg"><div class="wg-foot"><div>
       <b>Adelerin Samuel</b><br>Designed and built this dashboard.
-    </div><div><small>Data extracted from waug.oauife.edu.ng and data.allimediahub.com (AlliSports Data).</small></div></div></div>
+    </div><div><small>Data: AlliSports Data (data.allimediahub.com)<br>Official WAUG website: <a href="https://waug.oauife.edu.ng" target="_blank" rel="noopener noreferrer">waug.oauife.edu.ng</a></small></div></div></div>
     """)
 
 
-def results():
-    if not Path("medal_table.csv").exists():
-        st.error(f"Data files not found. Put medal_table.csv, medal_details.csv, event_results.csv and matches.csv in the same folder as app.py ({HERE}).")
-        st.stop()
+STATUS_LABEL = {"finished": "✅ Full time", "live": "🔴 Live", "scheduled": "🕒 Upcoming"}
 
-    table, det, ev = load()
+
+def scoreline(r):
+    if pd.isna(r.score_a) or pd.isna(r.score_b):
+        return f"{r.team_a}  vs  {r.team_b}"
+    pens = f" (pens {int(r.pens_a)}–{int(r.pens_b)})" if pd.notna(r.pens_a) and pd.notna(r.pens_b) else ""
+    a = ("✅ " if r.winner == "A" else "") + r.team_a
+    b = r.team_b + (" ✅" if r.winner == "B" else "")
+    return f"{a}  {int(r.score_a)}–{int(r.score_b)}  {b}{pens}"
+
+
+def api_match_line(m):
+    sc, pen = m.get("score") or {}, m.get("penalties") or {}
+    mid = f"{sc['home']}–{sc['away']}" if sc.get("home") is not None else "vs"
+    pens = f" (pens {pen['home']}–{pen['away']})" if pen.get("home") is not None else ""
+    return f"{m['home']['name']}  {mid}  {m['away']['name']}{pens}"
+
+
+def competition_section(mt):
+    st.markdown("##### Group tables and knockout rounds")
+    ev_api = mt[(mt.source == "api") & mt.event_id.notna()].drop_duplicates("event_id")
+    if ev_api.empty:
+        st.caption("Group tables are not available.")
+        return
+    names = dict(zip(ev_api.event_id, ev_api.event_name))
+    eid = st.selectbox("Team event", list(names), format_func=lambda x: names[x], key="m_comp")
+    try:
+        comp = load_competition(eid)["data"]
+    except ApiNotFound:
+        st.info("No group table has been set up for this event yet.")
+        return
+    except Exception as err:
+        st.info("Group tables are not available for this event.")
+        return
+    for grp in comp.get("groups", []):
+        st.markdown(f"**{grp['name']}**" + (" · complete" if grp.get("complete") else ""))
+        rows = [{"Pos": r.get("position"), "Team": r["team"]["name"], "P": r.get("played"), "W": r.get("won"), "D": r.get("drawn"),
+                 "L": r.get("lost"), "For": r.get("goalsFor"), "Against": r.get("goalsAgainst"), "GD": r.get("goalDifference"),
+                 "Pts": r.get("points"), "": "✅ qualifies" if r.get("qualifies") else ("🔴 live" if r.get("live") else "")}
+                for r in grp.get("rows", [])]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+        for note in grp.get("notes", []):
+            st.caption(note)
+    tb = (comp.get("rules") or {}).get("tieBreakers")
+    if tb:
+        st.caption("Tie-breakers, in order: " + ", ".join(tb))
+    for rd in comp.get("rounds", []):
+        st.markdown(f"**{rd['name']}**")
+        for m in rd.get("matches", []):
+            st.write("• " + api_match_line(m))
+
+
+def matches_tab():
+    mt, meta = load_matches()
+    st.subheader("Matches played and scorelines")
+    if meta.get("generatedAt") and not meta.get("error"):
+        st.caption("Data: AlliSports Data · updated " + meta["generatedAt"][:16].replace("T", " ") + " UTC. "
+                   "Football and basketball come from the feed; other sports are from a saved snapshot of 5–11 October.")
+    else:
+        st.caption("Data: AlliSports Data")
+    if mt.empty:
+        st.info("No match data available yet.")
+        return
+    c = st.columns(5)
+    sp_sel = c[0].multiselect("Sport ", sorted(mt.sport.unique()), key="m_sport")
+    cat_sel = c[1].multiselect("Category ", ["Men", "Women", "Mixed"], key="m_cat")
+    uni_sel = c[2].multiselect("University (abbr.)", sorted(set(mt.uni_a) | set(mt.uni_b)), key="m_uni")
+    st_sel = c[3].multiselect("Status", list(STATUS_LABEL.values()), key="m_status")
+    q = c[4].text_input("Search player / stage", key="m_q")
+
+    g = mt.copy()
+    if sp_sel: g = g[g.sport.isin(sp_sel)]
+    if cat_sel: g = g[g.category.isin(cat_sel)]
+    if uni_sel: g = g[g.uni_a.isin(uni_sel) | g.uni_b.isin(uni_sel)]
+    if st_sel: g = g[g.status.map(STATUS_LABEL).isin(st_sel)]
+    if q:
+        ql = q.lower()
+        g = g[g.apply(lambda r: ql in f"{r.team_a} {r.team_b} {r.stage} {r.uni_a} {r.uni_b}".lower(), axis=1)]
+    if g.empty:
+        st.info("No matches match these filters.")
+        return
+
+    played = g[g.status != "scheduled"]
+    team_g = played[played.sport.isin(["Football", "Basketball", "Handball"])]
+    k = st.columns(4)
+    k[0].metric("Matches", len(g))
+    k[1].metric("Sports", g.sport.nunique())
+    k[2].metric("Days", g.date.nunique())
+    k[3].metric("Goals / points scored (team sports)", int(team_g.score_a.fillna(0).sum() + team_g.score_b.fillna(0).sum()))
+    live = g[g.status == "live"]
+    for _, r in live.iterrows():
+        st.error(f"🔴 LIVE · {r.sport} · {scoreline(r)}")
+
+    c1, c2 = st.columns(2)
+    per_day = g.dropna(subset=["date"]).groupby(["date", "sport"]).size().reset_index(name="Matches")
+    per_day["Day"] = per_day.date.dt.strftime("%d %b")
+    fig = px.bar(per_day, x="Day", y="Matches", color="sport", title="Matches per day",
+                 category_orders={"Day": per_day.sort_values("date").Day.unique().tolist()})
+    fig.update_layout(xaxis_title=None, legend_title=None)
+    c1.plotly_chart(fig, width="stretch")
+
+    fin = g[g.status == "finished"]
+    res = pd.concat([
+        pd.DataFrame({"Uni": fin.uni_a, "Result": fin.winner.map({"A": "Won", "B": "Lost"}).fillna("Drawn")}),
+        pd.DataFrame({"Uni": fin.uni_b, "Result": fin.winner.map({"A": "Lost", "B": "Won"}).fillna("Drawn")})])
+    if not res.empty:
+        wl = res.groupby(["Uni", "Result"]).size().unstack(fill_value=0).reindex(columns=["Won", "Drawn", "Lost"], fill_value=0)
+        wl = wl.assign(T=wl.sum(axis=1)).sort_values(["Won", "Drawn", "T"], ascending=False).head(15)
+        fig = px.bar(wl.reset_index().melt(id_vars=["Uni", "T"], value_vars=["Won", "Drawn", "Lost"], var_name="Result", value_name="Matches"),
+                     y="Uni", x="Matches", color="Result", orientation="h", title="Wins, draws and losses (top 15)",
+                     color_discrete_map={"Won": "#000080", "Drawn": "#FFC72C", "Lost": "#9CA3AF"},
+                     category_orders={"Uni": wl.index.tolist()[::-1]})
+        fig.update_layout(yaxis_title=None, legend_title=None)
+        c2.plotly_chart(fig, width="stretch")
+
+    st.markdown("##### Results")
+    view = g.sort_values(["date", "time", "sport"], ascending=[False, False, True]).copy()
+    view["Match"] = view.apply(scoreline, axis=1)
+    view["Date"] = view.date.dt.strftime("%a %d %b")
+    view["Status"] = view.status.map(STATUS_LABEL)
+    show = view[["Date", "time", "sport", "category", "stage", "Match", "sets", "Status"]].rename(
+        columns={"time": "Time (WAT)", "sport": "Sport", "category": "Category", "stage": "Stage", "sets": "Detail"})
+    st.dataframe(show, hide_index=True, width="stretch", height=480)
+    st.caption("✅ marks the winner. Detail shows set scores (team listed first), quarters or half-time. "
+               "Football draws in knockout games are decided on penalties. Results marked live or provisional can still change. "
+               "Data: AlliSports Data.")
+    competition_section(mt)
+
+
+def results():
+    try:
+        table, det, ev, meta = load()
+    except Exception as err:
+        st.error(str(err))
+        st.stop()
+    if meta["source"] == "api":
+        st.caption("Data: AlliSports Data · updated " + meta["generatedAt"][:16].replace("T", " ") + " UTC"
+                   + (" · includes provisional results" if meta["includesProvisional"] else ""))
+    else:
+        st.caption("Data: AlliSports Data")
 
     col_logo, col_title = st.columns([0.05, 0.95])
 
@@ -359,8 +667,11 @@ def results():
         st.header("Filters")
         sports = st.multiselect("Sport", sorted(det.sport.unique()))
         cats = st.multiselect("Category", ["Male", "Female", "Mixed"])
-        countries = st.multiselect("Country", ["Nigeria", "Ghana"])
-        st.caption("Country is inferred from each university's location.")
+        countries = st.multiselect("Country", sorted(det.country.unique()))
+        st.caption("Country comes from the AlliSports Data feed.")
+        if st.button("Refresh data"):
+            st.cache_data.clear()
+            st.rerun()
 
     f = det.copy()
     if sports: f = f[f.sport.isin(sports)]
@@ -447,10 +758,14 @@ def results():
                                   "bronze": pd.concat([ev["Bronze I"], ev["Bronze II"]]).value_counts()}).fillna(0).astype(int)
         tt = table.set_index("university")[["gold", "silver", "bronze"]]
         match = ev_counts.reindex(tt.index, fill_value=0).equals(tt)
-        st.write(f"- Medal-table document: **{table.total.sum()}** medals across **{len(table)}** universities.")
-        st.write(f"- Event-results CSV: **{len(ev)}** events, **{int(ev_counts.values.sum())}** medals; "
+        st.write(f"- Medal table: **{table.total.sum()}** medals across **{len(table)}** universities.")
+        st.write(f"- Event results: **{len(ev)}** events, **{int(ev_counts.values.sum())}** medals; "
                  f"per-university counts {'match' if match else 'do not match'} the medal table.")
-        st.write(f"- Latest event update in the CSV: **{ev['Updated Timestamp'].max()}**. The medal-table document is stamped 27 Oct 2026.")
+        if meta["source"] == "api":
+            pend = int((ev["Status"] != "official").sum())
+            st.write(f"- Latest result update: **{ev['Updated Timestamp'].max()}** (UTC). {pend} of {len(ev)} events are still provisional.")
+        else:
+            st.write(f"- Latest event update in the snapshot: **{ev['Updated Timestamp'].max()}**.")
         st.download_button("Download filtered medals (CSV)", f.to_csv(index=False), "waug_2026_medals_filtered.csv", "text/csv")
 
 
@@ -460,67 +775,7 @@ def results():
 
     # ---------- 6. matches ----------
     with tab6:
-        if not Path("matches.csv").exists():
-            st.info("Add data/matches.csv to see match results.")
-        else:
-            mt = load_matches()
-            st.subheader("Matches played and scorelines")
-            c = st.columns(4)
-            sp_sel = c[0].multiselect("Sport ", sorted(mt.sport.unique()), key="m_sport")
-            cat_sel = c[1].multiselect("Category ", ["Men", "Women", "Mixed"], key="m_cat")
-            unis = sorted(set(mt.uni_a) | set(mt.uni_b))
-            uni_sel = c[2].multiselect("University (abbr.)", unis, key="m_uni")
-            q = c[3].text_input("Search player / stage", key="m_q")
-
-            g = mt.copy()
-            if sp_sel: g = g[g.sport.isin(sp_sel)]
-            if cat_sel: g = g[g.category.isin(cat_sel)]
-            if uni_sel: g = g[g.uni_a.isin(uni_sel) | g.uni_b.isin(uni_sel)]
-            if q:
-                ql = q.lower()
-                g = g[g.apply(lambda r: ql in f"{r.team_a} {r.team_b} {r.stage} {r.uni_a} {r.uni_b}".lower(), axis=1)]
-
-            def line(r):
-                pens = f" (pens {int(r.pens_a)}–{int(r.pens_b)})" if pd.notna(r.pens_a) else ""
-                a = ("✅ " if r.winner == "A" else "") + r.team_a
-                b = r.team_b + (" ✅" if r.winner == "B" else "")
-                return f"{a}  {r.score_a}–{r.score_b}  {b}{pens}"
-
-            k = st.columns(4)
-            k[0].metric("Matches", len(g))
-            k[1].metric("Sports", g.sport.nunique())
-            k[2].metric("Days", g.date.nunique())
-            team_g = g[g.sport.isin(["Football", "Basketball", "Handball"])]
-            k[3].metric("Goals / points scored (team sports)", int(team_g.score_a.sum() + team_g.score_b.sum()))
-
-            c1, c2 = st.columns(2)
-            per_day = g.groupby([g.date.dt.strftime("%d %b"), "sport"]).size().reset_index(name="Matches")
-            per_day.columns = ["Day", "Sport", "Matches"]
-            fig = px.bar(per_day, x="Day", y="Matches", color="Sport", title="Matches per day")
-            fig.update_layout(xaxis_title=None, legend_title=None)
-            c1.plotly_chart(fig, width="stretch")
-
-            res = pd.concat([
-                pd.DataFrame({"Uni": g.uni_a, "Result": g.winner.map({"A": "Won", "B": "Lost"})}),
-                pd.DataFrame({"Uni": g.uni_b, "Result": g.winner.map({"A": "Lost", "B": "Won"})})])
-            wl = res.groupby(["Uni", "Result"]).size().unstack(fill_value=0).reindex(columns=["Won", "Lost"], fill_value=0)
-            wl = wl.assign(T=wl.sum(axis=1)).sort_values(["Won", "T"], ascending=False).head(15)
-            fig = px.bar(wl.reset_index().melt(id_vars=["Uni", "T"], value_vars=["Won", "Lost"], var_name="Result", value_name="Matches"),
-                         y="Uni", x="Matches", color="Result", orientation="h", title="Wins and losses (top 15)",
-                         color_discrete_map={"Won": "#0F766E", "Lost": "#9CA3AF"}, category_orders={"Uni": wl.index.tolist()[::-1]})
-            fig.update_layout(yaxis_title=None, legend_title=None)
-            c2.plotly_chart(fig, width="stretch")
-
-            st.markdown("##### Results")
-            view = g.sort_values(["date", "sport"], ascending=[False, True]).assign(
-                Date=lambda d: d.date.dt.strftime("%a %d %b"), Match=g.apply(line, axis=1) if len(g) else "",
-                Detail=lambda d: d.sets, Category=lambda d: d.category)
-            st.dataframe(view[["Date", "sport", "Category", "stage", "Match", "Detail"]].rename(columns={"sport": "Sport", "stage": "Stage"}),
-                         hide_index=True, width="stretch", height=480)
-            st.caption("✅ marks the winner. Detail shows set scores (team listed first), quarters or halves. "
-                       "Football draws are decided on penalties. Results were transcribed from the AlliSports Data site "
-                       "(5–11 Oct 2026, 145 earlier results) and are provisional until confirmed by the Technical Committee.")
-
+        matches_tab()
 
 
 # ---------- navigation ----------
