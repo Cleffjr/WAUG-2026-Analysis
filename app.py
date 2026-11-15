@@ -595,6 +595,10 @@ ABOUT_CSS = """
 .wg-role p{margin:0;opacity:.85}
 .wg-sub a{color:#B88700;text-decoration:underline !important;font-weight:600}
 .wg-foot a{color:#FFD34D !important;text-decoration:underline !important}
+.wg-stack{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:.7rem;margin:.8rem 0 1rem}
+.wg-tool{border:1px solid rgba(128,128,128,.35);border-top:4px solid #FFC72C;border-radius:12px;padding:.8rem 1rem}
+.wg-tool small{display:block;text-transform:uppercase;letter-spacing:.08em;font-size:.7rem;opacity:.7}
+.wg-tool b{font-family:'Fraunces',Georgia,serif;font-size:1.05rem}
 @media(max-width:800px){.wg-partners{grid-template-columns:1fr}.wg-role{grid-template-columns:1fr;gap:.3rem}.wg-band .wg-h1{font-size:2rem}}
 </style>
 """
@@ -660,6 +664,12 @@ def about():
       <b>Adelerin Samuel</b><br>Designed and built this dashboard.
     </div><div><small>Data: AlliSports Data (data.allimediahub.com)<br>Official WAUG website: <a href="https://waug.oauife.edu.ng" target="_blank" rel="noopener noreferrer">waug.oauife.edu.ng</a></small></div></div></div>
     """)
+
+    tools = [("Language", "Python"), ("App framework", "Streamlit"), ("Data processing", "pandas"), ("Charts", "Plotly"),
+             ("API requests", "Requests"), ("Data source", "AlliSports Data API"), ("Typefaces", "Fraunces and Inter (Google Fonts)"),
+             ("Flag images", "FlagCDN"), ("Version control", "Git and GitHub"), ("Code editor", "PyCharm")]
+    html('<div class="wg"><div class="wg-eye" style="margin-top:1.4rem">Built with</div><div class="wg-stack">' + "".join(
+        f'<div class="wg-tool"><small>{esc(k)}</small><b>{esc(v)}</b></div>' for k, v in tools) + "</div></div>")
 
 
 STATUS_LABEL = {"finished": "✅ Full time", "live": "🔴 Live", "scheduled": "🕒 Upcoming"}
@@ -802,7 +812,12 @@ def results():
         st.caption("Last updated " + meta["generatedAt"][:16].replace("T", " ") + " UTC"
                    + (" · includes provisional results" if meta["includesProvisional"] else ""))
 
-    st.title("🏅 15th West Africa University Games 2026")
+    col_logo, col_title = st.columns([0.05, 0.95])
+
+    with col_logo:
+        st.image("waug-2026-logo.png", width=70)
+    with col_title:
+        st.title("West African University Games 2026")
     st.caption("Medal table and event results · data from the AlliSports Data API")
 
     # ---------- sidebar filters ----------
