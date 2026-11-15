@@ -1,4 +1,6 @@
+import inspect
 import os
+from html import escape as esc
 from pathlib import Path
 
 import pandas as pd
@@ -215,15 +217,6 @@ IMG = BASE + "images/"
 SPORTS = [("🏃", "Athletics"), ("⚽", "Football"), ("🏀", "Basketball"), ("🏊", "Swimming"), ("🏐", "Volleyball"),
           ("🥊", "Boxing"), ("🏋", "Weightlifting"), ("🥋", "Judo"), ("🦵", "Taekwondo"), ("🏓", "Table Tennis"),
           ("🏸", "Badminton"), ("🎾", "Tennis"), ("🤾", "Handball"), ("🚴", "Cycling"), ("🤼", "Wrestling"), ("🏉", "Rugby")]
-COUNTRIES = [("bj", "Benin"), ("bf", "Burkina Faso"), ("cv", "Cabo Verde"), ("ci", "Côte d'Ivoire"), ("gm", "The Gambia"),
-             ("gh", "Ghana"), ("gn", "Guinea"), ("gw", "Guinea-Bissau"), ("lr", "Liberia"), ("ml", "Mali"),
-             ("mr", "Mauritania"), ("ne", "Niger"), ("ng", "Nigeria"), ("sn", "Senegal"), ("sl", "Sierra Leone"), ("tg", "Togo")]
-GALLERY = [("hero-sports-1.jpg", "Student-athletes competing at a university sports event"),
-           ("opening-81.jpg", "Opening ceremony: athletes waving flags during the parade"),
-           ("opening-63.jpg", "Opening ceremony: athletes marching on the track"),
-           ("opening-112.jpg", "Opening ceremony: University of Ilesa delegation"),
-           ("opening-109.jpg", "Opening ceremony: Team UENR"),
-           ("opening-22.jpg", "Opening ceremony: Team UENR with the Ghana flag")]
 HOME_CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,800&family=Inter:wght@400;500;600&display=swap');
@@ -264,16 +257,44 @@ HOME_CSS = """
 .wg-chip{display:inline-flex;align-items:center;gap:.45rem;background:#000080;border:1.5px solid #000080;color:#fff;border-radius:999px;padding:.4rem .95rem;font-weight:500;font-size:.95rem}
 .wg-chip img{width:24px;height:24px;border-radius:50%;object-fit:cover;box-shadow:0 0 0 1px rgba(128,128,128,.4)}
 .wg-chip.c{background:rgba(0,0,128,.12);border-color:#FFC72C;color:inherit}
-.wg-quote{font-family:'Fraunces',Georgia,serif;font-size:1.55rem;line-height:1.4;padding:1.2rem 0 1.2rem 1.6rem;margin:1.2rem 0;border-left:6px solid #FFC72C;position:relative}
-.wg-quote small{display:block;margin-top:.8rem;font-family:'Inter',sans-serif;font-size:.9rem;opacity:.75}
-.wg-mosaic{display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:150px;gap:.6rem;margin-top:.8rem}
-.wg-mosaic img{width:100%;height:100%;object-fit:cover;border-radius:14px;display:block}
-.wg-mosaic img:first-child{grid-column:span 2;grid-row:span 2}
 .wg-foot{margin-top:3rem;border-top:6px solid #FFC72C;background:#000080;color:#fff;border-radius:0 0 22px 22px;padding:1.5rem 1.8rem;display:grid;grid-template-columns:1.4fr 1fr;gap:1.5rem}
 .wg-foot b{font-family:'Fraunces',Georgia,serif;font-size:1.3rem}
 .wg-foot small{color:rgba(255,255,255,.8)}
-@media(max-width:800px){.wg-hero,.wg-foot{grid-template-columns:1fr;padding:1.5rem}.wg-h1{font-size:2.2rem}.wg-nums{grid-template-columns:repeat(2,1fr)}
- .wg-mosaic{grid-template-columns:repeat(2,1fr)}.wg-strip{grid-template-columns:1fr}.wg-strip div+div{border-left:0;border-top:1px solid rgba(128,128,128,.35)}}
+.wg-recs{display:grid;grid-template-columns:repeat(3,1fr);gap:.9rem;margin:1rem 0}
+.wg-rec{border:1px solid rgba(128,128,128,.35);border-top:4px solid #FFC72C;border-radius:12px;padding:1rem 1.1rem}
+.wg-rec span{display:block;text-transform:uppercase;letter-spacing:.08em;font-size:.72rem;opacity:.7;margin-bottom:.3rem}
+.wg-rec b{display:block;font-family:'Fraunces',Georgia,serif;font-size:1.45rem;line-height:1.2}
+.wg-rec small{display:block;margin-top:.4rem;opacity:.8}
+.wg-champs{display:grid;grid-template-columns:repeat(3,1fr);gap:.9rem;margin:1rem 0}
+.wg-champ{background:#000080;color:#fff;border-radius:14px;border-bottom:4px solid #FFC72C;padding:1rem 1.2rem}
+.wg-champ span{display:block;color:#FFD34D;text-transform:uppercase;letter-spacing:.08em;font-size:.72rem;margin-bottom:.3rem}
+.wg-champ b{display:block;font-family:'Fraunces',Georgia,serif;font-size:1.25rem;line-height:1.25}
+.wg-champ small{display:block;margin-top:.5rem;color:rgba(255,255,255,.82)}
+.wg-board{margin:1rem 0;border:1px solid rgba(128,128,128,.35);border-radius:14px;overflow:hidden}
+.wg-row{display:grid;grid-template-columns:56px 1fr auto;gap:.8rem;align-items:center;padding:.8rem 1.1rem;border-bottom:1px solid rgba(128,128,128,.25)}
+.wg-row:last-child{border-bottom:0}
+.wg-row .pos{font-family:'Fraunces',Georgia,serif;font-weight:800;font-size:1.6rem;color:#B88700}
+.wg-row .who b{display:block}
+.wg-row .who small{opacity:.7}
+.wg-row .meds span{display:inline-block;border:1px solid rgba(128,128,128,.4);border-radius:999px;padding:.15rem .6rem;margin-left:.3rem;font-size:.9rem}
+.wg-stages{display:grid;grid-template-columns:repeat(3,1fr);margin:1.2rem 0}
+.wg-stage{position:relative;padding-right:1.4rem}
+.wg-stage::before{content:"";position:absolute;top:21px;left:48px;right:0;height:3px;background:rgba(128,128,128,.35)}
+.wg-stage:last-child::before{display:none}
+.wg-stage .dot{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Fraunces',Georgia,serif;font-weight:800;color:#fff;position:relative;z-index:1;box-shadow:0 0 0 2px rgba(128,128,128,.4)}
+.wg-stage.s1 .dot{background:#000080}.wg-stage.s2 .dot{background:#FFC72C;color:#000080}.wg-stage.s3 .dot{background:#000033}
+.wg-stage span{display:block;margin-top:.9rem;text-transform:uppercase;letter-spacing:.08em;font-size:.72rem;opacity:.7}
+.wg-stage h4{margin:.2rem 0 .35rem;font-family:'Fraunces',Georgia,serif;font-size:1.2rem}
+.wg-stage p{margin:0;opacity:.85}
+.wg-unis{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:.6rem;margin:.8rem 0}
+.wg-uni{display:flex;align-items:center;gap:.7rem;border:1px solid rgba(128,128,128,.35);border-radius:12px;padding:.6rem .8rem}
+.wg-uni img{width:30px;height:20px;object-fit:cover;border-radius:3px;box-shadow:0 0 0 1px rgba(128,128,128,.4)}
+.wg-uni b{display:block;font-size:.85rem;color:#B88700}
+.wg-uni span{font-size:.92rem;line-height:1.25}
+div.stButton>button{background:#000080;color:#fff;border:0;border-radius:10px;font-weight:600;padding:.6rem 1rem}
+div.stButton>button:hover{background:#FFC72C;color:#000080}
+@media(max-width:800px){.wg-champs,.wg-recs{grid-template-columns:1fr}.wg-stages{grid-template-columns:1fr;gap:1.4rem}.wg-stage::before{display:none}.wg-hero,.wg-foot{grid-template-columns:1fr;padding:1.5rem}.wg-h1{font-size:2.2rem}.wg-nums{grid-template-columns:repeat(2,1fr)}
+.wg-strip{grid-template-columns:1fr}.wg-strip div+div{border-left:0;border-top:1px solid rgba(128,128,128,.35)}}
 </style>
 """
 
@@ -291,6 +312,111 @@ def section(eyebrow, title, sub=None):
          f'<div class="wg-h2">{title}</div>' + (f'<div class="wg-sub">{sub}</div>' if sub else "") + "</div>")
 
 
+def records(det, mt):
+    """Highlights worked out from the results: (value, label, detail) cards."""
+    out = []
+    d = det.copy()
+    d["medal"] = d.medal.astype(str)
+    ind = d[~d.athlete.isin(["Team", "–"]) & ~d.athlete.str.contains("/|,", regex=True)]
+    if not ind.empty:
+        t = ind.groupby(["athlete", "abbr", "medal"]).size().unstack(fill_value=0).reindex(columns=["Gold", "Silver", "Bronze"], fill_value=0)
+        t["Total"] = t.sum(axis=1)
+        (name, abbr), r = next(iter(t.sort_values(["Gold", "Total"], ascending=False).iterrows()))
+        out.append((name, "Most decorated athlete", f"{r.Gold} gold · {r.Silver} silver · {r.Bronze} bronze · {abbr}"))
+    by_sport = d.groupby("sport").size().sort_values(ascending=False)
+    n_events = d.groupby("sport").event.nunique()
+    out.append((by_sport.index[0], "Sport with the most medals", f"{by_sport.iloc[0]} medals across {n_events[by_sport.index[0]]} events"))
+    gold = d[d.medal == "Gold"].groupby(["abbr", "sport"]).size().sort_values(ascending=False)
+    if not gold.empty:
+        out.append((gold.index[0][0], "Most golds in a single sport", f"{gold.iloc[0]} gold medals in {gold.index[0][1]}"))
+    if mt is not None and not mt.empty:
+        fin = mt[(mt.status == "finished") & mt.score_a.notna() & mt.score_b.notna()].copy()
+        fin["margin"] = (fin.score_a - fin.score_b).abs()
+        for sport in ("Football", "Basketball"):
+            g = fin[fin.sport == sport]
+            if g.empty or g.margin.max() == 0:
+                continue
+            r = g.sort_values("margin", ascending=False).iloc[0]
+            win, lose = (r.team_a, r.team_b) if r.score_a > r.score_b else (r.team_b, r.team_a)
+            hi, lo = int(max(r.score_a, r.score_b)), int(min(r.score_a, r.score_b))
+            out.append((f"{hi}–{lo}", f"Biggest {sport.lower()} win", f"{win} beat {lose}" + (f" · {r.stage}" if r.stage else "")))
+        pens = fin[(fin.sport == "Football") & fin.pens_a.notna()]
+        if len(pens):
+            out.append((str(len(pens)), "Football matches settled on penalties", "After the score was level at full time"))
+    return out
+
+
+CODE_BY_NAME = {"Nigeria": "NG", "Ghana": "GH"}
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_universities():
+    """Every university that took part: (code, name, country code). From the API, else from the saved medal table."""
+    try:
+        rows = api_get("universities")["data"]
+        df = pd.DataFrame([{"code": r["code"], "name": r["name"], "country": r.get("country") or ""} for r in rows])
+    except Exception:
+        t = load()[0]
+        df = pd.DataFrame({"code": t.abbr, "name": t.university, "country": t.country.map(lambda c: CODE_BY_NAME.get(c, c))})
+    return df.sort_values("name").reset_index(drop=True)
+
+
+def champions(det, mt):
+    """Champions of the team sports, with the final's scoreline when the matches have it."""
+    d = det.copy()
+    d["medal"] = d.medal.astype(str)
+    d = d[(d.athlete == "Team") & d.sport.isin(["Football", "Basketball", "Volleyball", "Handball"])]
+    out = []
+    for (sport, cat3), g in d.groupby(["sport", "cat3"]):
+        gold = g[g.medal == "Gold"]
+        if gold.empty:
+            continue
+        champ, code = gold.iloc[0].university, gold.iloc[0].abbr
+        silver = g[g.medal == "Silver"]
+        detail = f"Runner-up: {silver.iloc[0].university}" if not silver.empty else ""
+        if mt is not None and not mt.empty:
+            f = mt[(mt.sport == sport) & (mt.category == cat3) & (mt.stage.fillna("").str.strip().str.lower() == "final")
+                   & (mt.status == "finished") & mt.score_a.notna()]
+            f = f[((f.uni_a == code) & (f.winner == "A")) | ((f.uni_b == code) & (f.winner == "B"))]
+            if not f.empty:
+                r = f.iloc[0]
+                opp = r.team_b if r.uni_a == code else r.team_a
+                mine, theirs = (r.score_a, r.score_b) if r.uni_a == code else (r.score_b, r.score_a)
+                pens = ""
+                if pd.notna(r.pens_a) and pd.notna(r.pens_b):
+                    pm, pt = (r.pens_a, r.pens_b) if r.uni_a == code else (r.pens_b, r.pens_a)
+                    pens = f" (pens {int(pm)}–{int(pt)})"
+                detail = f"Final: {int(mine)}–{int(theirs)}{pens} vs {opp}"
+        out.append((f"{cat3}'s {sport.lower()}", champ, detail))
+    return sorted(out)
+
+
+def top_athletes(det, n=5):
+    d = det.copy()
+    d["medal"] = d.medal.astype(str)
+    ind = d[~d.athlete.isin(["Team", "–"]) & ~d.athlete.str.contains("/|,", regex=True)]
+    if ind.empty:
+        return []
+    t = ind.groupby(["athlete", "abbr", "medal"]).size().unstack(fill_value=0).reindex(columns=["Gold", "Silver", "Bronze"], fill_value=0)
+    t["Total"] = t.sum(axis=1)
+    t = t.sort_values(["Gold", "Total", "Silver"], ascending=False).head(n)
+    return [(a, u, int(r.Gold), int(r.Silver), int(r.Bronze)) for (a, u), r in t.iterrows()]
+
+
+def go(page, tab=None):
+    """Quick link: open a page (and optionally a tab of the Results Dashboard)."""
+    st.session_state["goto_tab"] = tab
+    st.switch_page(page)
+
+
+STAGES = [("Opening Phase", "Arrival & Accreditation",
+           "Delegation arrivals, verification, technical meetings, training access, and the opening ceremony."),
+          ("Competition Phase", "Preliminaries & Finals",
+           "Team and individual competitions delivered across approved university and partner venues."),
+          ("Closing Phase", "Finals & Farewell",
+           "Championship finals, medal presentations, closing ceremony, and delegation departures.")]
+
+
 def home():
     html(HOME_CSS)
     _n["i"] = 0
@@ -306,6 +432,19 @@ def home():
     <div class="wg-strip"><div><b>2–12 Oct</b><span>Games Dates</span></div><div><b>Ile-Ife</b><span>Host City</span></div>
     <div><b>2026</b><span>Games Edition</span></div></div></div>
     """)
+
+
+    # ---- quick links ----
+    section("Quick links", "Find what you need")
+    links = [("🏅 Medal table", "Medal table", "Rankings by gold, silver and bronze"),
+             ("🥇 Event winners", "Event winners", "Names of every podium finisher"),
+             ("⚽ Matches", "Matches", "Scorelines, group tables and knockouts"),
+             ("🏃 Athletes", "Athletes", "The most decorated athletes"),
+             ("ℹ️ About", None, "The organisers and the data")]
+    for col, (label, tab, note) in zip(st.columns(len(links)), links):
+        if col.button(label, key=f"ql_{label}", width="stretch"):
+            go(about_page if tab is None else results_page, tab)
+        col.caption(note)
 
     # ---- results at a glance (from the app's own data) ----
     try:
@@ -326,36 +465,42 @@ def home():
             pods += (f'<div class="wg-pod {cls}"><span class="m">{emoji}</span><b>{r.university}</b>'
                      f'<small>{r.gold} gold · {r.silver} silver · {r.bronze} bronze · {r.total} total</small></div>')
         html(f'<div class="wg"><div class="wg-podium">{pods}</div></div>')
-        st.page_link(results_page, label="Open the full results dashboard", icon="🏅")
 
-    # ---- official announcement ----
-    section("Official Announcement", "15th West Africa University Games")
-    a, b = st.columns([2, 3])
-    a.image(IMG + "waug-2026-announcement.jpeg", caption="Official announcement poster")
-    b.write("WAUG 2026 took place at Obafemi Awolowo University, Ile-Ife, Nigeria, from 2 to 12 October 2026, bringing universities "
-            "across West Africa together under one regional sporting spirit.")
+        det_, mt_ = load()[1], load_matches()[0]
+        try:
+            champs = champions(det_, mt_)
+        except Exception:
+            champs = []
+        if champs:
+            section("Champions", "Team sport champions", "The winners of the team sports at WAUG 2026.")
+            html('<div class="wg"><div class="wg-champs">' + "".join(
+                f'<div class="wg-champ"><span>🏆 {esc(e)}</span><b>{esc(u)}</b><small>{esc(dt)}</small></div>' for e, u, dt in champs) + "</div></div>")
+        try:
+            top5 = top_athletes(det_)
+        except Exception:
+            top5 = []
+        if top5:
+            section("Athletes", "Top 5 athletes", "Ranked by gold medals, then total medals.")
+            html('<div class="wg"><div class="wg-board">' + "".join(
+                f'<div class="wg-row"><div class="pos">{i}</div><div class="who"><b>{esc(a)}</b><small>{esc(u)}</small></div>'
+                f'<div class="meds"><span>🥇 {g}</span><span>🥈 {sv}</span><span>🥉 {b}</span></div></div>'
+                for i, (a, u, g, sv, b) in enumerate(top5, 1)) + "</div></div>")
+            st.caption("Individual entries only. Names are as recorded, so spelling differences can lower an athlete's count.")
 
-    # ---- about ----
-    section("About WAUG 2026", "Where West Africa Meets Through University Sport")
-    a, b = st.columns([2, 3])
-    a.image(IMG + "waug-2026-mascot.jpeg", caption="Official mascot in blue and gold sportswear")
-    b.write("WAUG 2026 brought university communities together through disciplined competition and a shared commitment to the "
-            "development of student-athletes across West Africa.")
-    b.write("Hosted by Obafemi Awolowo University from 2 to 12 October 2026, the Games placed sporting excellence alongside education, "
-            "culture, respect, and regional cooperation.")
-    b.write("The mascot and logo presented the Games as both a modern sporting event and a proud expression of "
-            "Yoruba heritage in Ile-Ife.")
+        try:
+            recs = records(load()[1], load_matches()[0])
+        except Exception:
+            recs = []
+        if recs:
+            section("Highlights", "Records and highlights", "Worked out from the results data.")
+            html('<div class="wg"><div class="wg-recs">' + "".join(
+                f'<div class="wg-rec"><span>{esc(l)}</span><b>{esc(v)}</b><small>{esc(dt)}</small></div>' for v, l, dt in recs) + "</div></div>")
 
-    # ---- mascot & logo ----
-    section("Mascot & Logo Approved", "A Cultural Emblem for a Regional Games")
-    st.write("The Local Organising Committee officially approved the WAUG 2026 mascot and logo, a major step in "
-             "preparations for the Games at Obafemi Awolowo University, Ile-Ife.")
-    st.write("The mascot draws from West African culture and the Yoruba heritage of Ile-Ife. It features the Olokun head, a symbol of "
-             "wealth, prosperity, and the sea in Yoruba mythology, with the Opele divination chain and cowries adding meanings of "
-             "wisdom, prestige, and shared identity.")
-    html('<div class="wg"><div class="wg-quote">“These symbols are not just emblems; they are the embodiment of our rich cultural '
-         'heritage and the unifying spirit of WAUG.”<small>Prof. E.O. Akinfala, Chairman of the LOC and Deputy Vice Chancellor '
-         '(Administration), OAU</small></div></div>')
+    # ---- key stages ----
+    section("Programme overview", "Key Stages of the Games")
+    html('<div class="wg"><div class="wg-stages">' + "".join(
+        f'<div class="wg-stage s{i}"><div class="dot">{i}</div><span>{ph}</span><h4>{t}</h4><p>{d}</p></div>'
+        for i, (ph, t, d) in enumerate(STAGES, 1)) + "</div></div>")
 
     # ---- host ----
     section("The Host", "Obafemi Awolowo University, Ile-Ife",
@@ -372,15 +517,20 @@ def home():
             "and other individual and team events.")
     html('<div class="wg"><div class="wg-chips">' + "".join(f'<span class="wg-chip">{e} {n}</span>' for e, n in SPORTS) + "</div></div>")
 
-    # ---- countries ----
-    section("Participating Countries", "West Africa Represented at WAUG 2026",
-            "Universities and student-athletes from across West Africa were expected in Ile-Ife for the Games.")
-    html('<div class="wg"><div class="wg-chips">' + "".join(
-        f'<span class="wg-chip c"><img src="https://flagcdn.com/w80/{c}.png" alt="Flag of {n}">{n}</span>' for c, n in COUNTRIES) + "</div></div>")
-
-    # ---- gallery ----
-    section("Gallery", "Moments from Ile-Ife")
-    html('<div class="wg"><div class="wg-mosaic">' + "".join(f'<img src="{IMG}{f}" alt="{alt}" title="{alt}">' for f, alt in GALLERY) + "</div></div>")
+    # ---- participating universities ----
+    try:
+        unis = load_universities()
+    except Exception:
+        unis = pd.DataFrame()
+    if not unis.empty:
+        n_c = unis.country[unis.country != ""].nunique()
+        section("Participating universities", "Universities at WAUG 2026",
+                f"{len(unis)} universities from {n_c} {'country' if n_c == 1 else 'countries'} took part in the Games.")
+        def flag(c):
+            return f'<img src="https://flagcdn.com/w80/{c.lower()}.png" alt="">' if len(c) == 2 else ""
+        html('<div class="wg"><div class="wg-unis">' + "".join(
+            f'<div class="wg-uni">{flag(r.country)}<div><b>{esc(r.code)}</b><span>{esc(r["name"])}</span></div></div>'
+            for _, r in unis.iterrows()) + "</div></div>")
 
     # ---- footer ----
     html("""
@@ -649,18 +799,11 @@ def results():
         st.error(str(err))
         st.stop()
     if meta["source"] == "api":
-        st.caption("Data: AlliSports Data · updated " + meta["generatedAt"][:16].replace("T", " ") + " UTC"
+        st.caption("Last updated " + meta["generatedAt"][:16].replace("T", " ") + " UTC"
                    + (" · includes provisional results" if meta["includesProvisional"] else ""))
-    else:
-        st.caption("Data: AlliSports Data")
 
-    col_logo, col_title = st.columns([0.05, 0.95])
-
-    with col_logo:
-        st.image("waug-2026-logo.png", width=70)
-    with col_title:
-        st.title("West African University Games 2026")
-    st.caption("Medal table and event results · built from the official medal-table document and the event-results export")
+    st.title("🏅 15th West Africa University Games 2026")
+    st.caption("Medal table and event results · data from the AlliSports Data API")
 
     # ---------- sidebar filters ----------
     with st.sidebar:
@@ -689,7 +832,10 @@ def results():
     k[2].metric("Universities with medals", f.university.nunique())
     k[3].metric("Leader (by gold)", by_school.index[0] if len(by_school) else "–")
 
-    tab1, tab2, tab4, tab5, tab7, tab6 = st.tabs(["Medal table", "Sports", "Athletes", "Events & data", "Event winners", "Matches"])
+    tab_labels = ["Medal table", "Sports", "Athletes", "Events & data", "Event winners", "Matches"]
+    goto = st.session_state.get("goto_tab")   # kept (not removed) so the tabs keep their identity on every rerun
+    kw = {"default": goto} if goto in tab_labels and "default" in inspect.signature(st.tabs).parameters else {}
+    tab1, tab2, tab4, tab5, tab7, tab6 = st.tabs(tab_labels, **kw)
 
     # ---------- 1. medal table ----------
     with tab1:
