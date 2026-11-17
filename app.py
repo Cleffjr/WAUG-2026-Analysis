@@ -417,7 +417,7 @@ STAGES = [("Opening Phase", "Arrival & Accreditation",
            "Championship finals, medal presentations, closing ceremony, and delegation departures.")]
 
 
-def home():
+def overview():
     html(HOME_CSS)
     _n["i"] = 0
 
@@ -439,11 +439,11 @@ def home():
     links = [("🏅 Medal table", "Medal table", "Rankings by gold, silver and bronze"),
              ("🥇 Event winners", "Event winners", "Names of every podium finisher"),
              ("⚽ Matches", "Matches", "Scorelines, group tables and knockouts"),
-             ("🏃 Athletes", "Athletes", "The most decorated athletes"),
+             ("📄 Report", "__report__", "Why the results look the way they do"),
              ("ℹ️ About", None, "The organisers and the data")]
     for col, (label, tab, note) in zip(st.columns(len(links)), links):
         if col.button(label, key=f"ql_{label}", width="stretch"):
-            go(about_page if tab is None else results_page, tab)
+            go(about_page if tab is None else report_page if tab == "__report__" else results_page, None if tab == "__report__" else tab)
         col.caption(note)
 
     # ---- results at a glance (from the app's own data) ----
@@ -802,6 +802,457 @@ def matches_tab():
     competition_section(mt)
 
 
+HOST_CODE = "OAU"   # host institution (the Games were held on the OAU campus)
+
+
+def _ord(n):
+    n = int(n)
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
+def _pct(x, d=0):
+    return f"{x * 100:.{d}f}%"
+
+
+REPORT_CSS = """
+<style>
+.wg-rhero{background:linear-gradient(135deg,#000080 0%,#0b1a94 55%,#1c2ba8 100%);color:#fff;border-radius:22px;padding:2.2rem 2.4rem;border:1px solid rgba(255,255,255,.12)}
+.wg-rhero .eyebrow{color:#FFD34D;font-weight:700;letter-spacing:.14em;text-transform:uppercase;font-size:.72rem}
+.wg-rhero .wg-h1{font-size:2.5rem;margin:.9rem 0 .8rem;color:#fff;max-width:46rem}
+.wg-rhero p{color:rgba(255,255,255,.88);font-size:1.05rem;line-height:1.65;max-width:46rem;margin:0}
+.wg-kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:.9rem;margin:1.4rem 0 .6rem}
+.wg-kpi{border:1px solid rgba(255,255,255,.22);border-radius:14px;padding:1rem 1.1rem;background:rgba(255,255,255,.06)}
+.wg-kpi b{display:block;font-family:'Fraunces',Georgia,serif;font-size:2.2rem;color:#FFD34D;line-height:1.1}
+.wg-kpi span{display:block;font-size:.9rem;margin-top:.3rem}
+.wg-kpi small{display:block;margin-top:.7rem;font-size:.66rem;letter-spacing:.1em;text-transform:uppercase;opacity:.7}
+.wg-by{font-size:.82rem;opacity:.8;margin-top:.6rem}
+.wg-h2.big{font-size:2rem;margin-top:3.2rem}
+.wg-callout{border-left:4px solid #FFC72C;background:rgba(255,199,44,.13);border-radius:0 12px 12px 0;padding:.9rem 1.1rem;margin:.6rem 0 1rem}
+.wg-pill{display:inline-block;font-size:.66rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:.14rem .6rem;border-radius:999px;margin-right:.5rem;vertical-align:middle}
+.wg-pill.r{background:#000080;color:#fff}.wg-pill.m{border:1px solid #B88700;color:#B88700}.wg-pill.a{background:#FFC72C;color:#000080}
+.wg-short{margin:.4rem 0;padding-left:0;list-style:none}
+.wg-short li{margin:.8rem 0;line-height:1.6}
+.wg-ct{font-weight:700;font-size:1.05rem;margin-top:1rem}
+.wg-cs{font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;opacity:.65;margin-bottom:.3rem}
+.wg-note{border-left:3px solid #FFC72C;padding:.3rem .9rem;margin:.4rem 0 .3rem;font-size:.95rem}
+.wg-note b{font-size:.66rem;letter-spacing:.12em;text-transform:uppercase;color:#B88700;margin-right:.5rem}
+.wg-stats3{display:grid;grid-template-columns:repeat(3,1fr);gap:.9rem;margin:1rem 0}
+.wg-st{border:1px solid rgba(128,128,128,.35);border-top:4px solid #6C8CFF;border-radius:12px;padding:1rem 1.1rem}
+.wg-st.g{border-top-color:#FFC72C}.wg-st.n{border-top-color:#9CA3AF}
+.wg-st b{display:block;font-family:'Fraunces',Georgia,serif;font-size:1.9rem}
+.wg-st span{display:block;font-weight:600}
+.wg-st small{display:block;opacity:.75;margin-top:.3rem}
+.wg-team{display:flex;gap:1rem;align-items:flex-start;border:1px solid rgba(128,128,128,.35);border-radius:14px;padding:1rem 1.2rem;max-width:30rem}
+.wg-team .av{width:46px;height:46px;border-radius:50%;background:#000080;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex:none}
+.wg-team b{font-family:'Fraunces',Georgia,serif;font-size:1.15rem}
+.wg-team em{display:block;color:#B88700;font-style:normal;font-size:.85rem;font-weight:600;margin:.1rem 0 .3rem}
+.wg-team p{margin:0;opacity:.85;font-size:.92rem}
+.wg-fine{border-top:1px solid rgba(128,128,128,.35);margin-top:2.5rem;padding-top:1rem;font-size:.85rem;line-height:1.7;opacity:.9}
+@media(max-width:800px){.wg-kpis,.wg-stats3{grid-template-columns:1fr}.wg-rhero{padding:1.4rem}.wg-rhero .wg-h1{font-size:1.9rem}}
+</style>
+"""
+PILL = {"results": '<span class="wg-pill r">Results</span>', "matches": '<span class="wg-pill m">Matches</span>',
+        "calc": '<span class="wg-pill a">Calculated</span>'}
+
+
+def rsec(n, title, answer, anchor=None):
+    a = f' id="{anchor}"' if anchor else ""
+    html(f'<div class="wg"><div class="wg-h2 big"{a}>{n}. {esc(title)}</div><div class="wg-callout">{answer}</div></div>')
+
+
+def chead(title, sub=""):
+    html(f'<div class="wg"><div class="wg-ct">{esc(title)}</div><div class="wg-cs">{esc(sub)}</div></div>')
+
+
+def rnote(text):
+    html(f'<div class="wg"><div class="wg-note"><b>What it shows</b>{text}</div></div>')
+
+
+def howto(text):
+    with st.expander("How to read this chart"):
+        st.write(text)
+
+
+def report():
+    html(HOME_CSS)
+    html(ABOUT_CSS)
+    html(REPORT_CSS)
+    try:
+        table, det, ev, meta = load()
+        mt = load_matches()[0]
+    except Exception as err:
+        st.error(f"Could not load the data: {err}")
+        return
+    d = det.copy()
+    d["medal"] = d.medal.astype(str)
+    t = table.sort_values("rank").reset_index(drop=True)
+    if len(t) < 3:
+        st.info("Not enough results yet for the report.")
+        return
+    T = int(t.total.sum())
+    t["share"] = t.total / T
+    n_s = len(t)
+    lead, run = t.iloc[0], t.iloc[1]
+    n_sports = d.sport.nunique()
+    E = esc
+
+    # ---------- computations ----------
+    top1, top3, top5 = t.share.iloc[0], t.share.head(3).sum(), t.share.head(5).sum()
+    eff = 1 / float((t.share ** 2).sum())
+    cum = pd.DataFrame({"Rank": range(1, n_s + 1), "School": t.abbr, "Cumulative share": t.share.cumsum()})
+    k50 = int((cum["Cumulative share"] >= 0.5).idxmax()) + 1
+    q = t.set_index("abbr")[["university", "total", "gold"]].join(d.groupby("abbr").sport.nunique().rename("sports")).reset_index()
+    q["gold_rate"] = q.gold / q.total
+    r_b = float(q.total.corr(q.sports))
+    strength = "strong" if r_b >= 0.7 else "moderate" if r_b >= 0.4 else "weak"
+    elig = q[q.total >= 10].sort_values(["gold_rate", "total"], ascending=False)
+    best = elig.iloc[0] if not elig.empty else None
+    lq = q[q.abbr == lead.abbr].iloc[0]
+    cnt = d.groupby(["abbr", "sport"]).size().unstack(fill_value=0)
+    diff = (cnt.loc[lead.abbr] - cnt.loc[run.abbr]).sort_values(ascending=False)
+    gap = int(lead.total - run.total)
+    ahead, behind, level = int((diff > 0).sum()), int((diff < 0).sum()), int((diff == 0).sum())
+    adds_up = int(diff.sum()) == gap
+    top_two = ", ".join(f"{s} (+{int(v)})" for s, v in diff.head(2).items() if v > 0)
+    host = t[t.abbr == HOST_CODE]
+
+    off = "Official (gold first)"
+    alt = t[["abbr", "university", "rank", "gold", "silver", "bronze", "total"]].copy().rename(columns={"rank": off})
+    alt["Total medals"] = alt.total.rank(method="min", ascending=False).astype(int)
+    alt["Points (3-2-1)"] = (3 * alt.gold + 2 * alt.silver + alt.bronze).rank(method="min", ascending=False).astype(int)
+    alt["Golds only"] = alt.gold.rank(method="min", ascending=False).astype(int)
+    alt_cols = ["Total medals", "Points (3-2-1)", "Golds only"]
+    delta = alt[alt_cols].sub(alt[off], axis=0).abs()
+    moved3 = int((delta.max(axis=1) >= 3).sum())
+    stable_k = 0
+    for k in (1, 2, 3):
+        if all(set(alt[alt[c] <= k].abbr) == set(alt[alt[off] <= k].abbr) for c in alt_cols):
+            stable_k = k
+        else:
+            break
+    changed = ""
+    if stable_k < 3:
+        nxt = alt[alt[off] == stable_k + 1].iloc[0]
+        wc = max(alt_cols, key=lambda c: abs(int(nxt[c]) - stable_k - 1))
+        changed = f"{nxt.abbr} is {_ord(stable_k + 1)} officially but {_ord(nxt[wc])} by {wc.lower()}."
+    big = alt.loc[delta.max(axis=1).idxmax()] if delta.max().max() > 0 else None
+    bigcol = max(alt_cols, key=lambda c: abs(int(big[c]) - int(big[off]))) if big is not None else None
+
+    fin = mt[(mt.status == "finished") & mt.score_a.notna() & mt.score_b.notna()].copy() if not mt.empty else mt
+    if not fin.empty:
+        fin["margin"] = (fin.score_a - fin.score_b).abs()
+    bb = fin[fin.sport == "Basketball"] if not fin.empty else fin
+    fb = fin[fin.sport == "Football"] if not fin.empty else fin
+
+    chk = d.groupby(["abbr", "medal"]).size().unstack(fill_value=0).reindex(columns=["Gold", "Silver", "Bronze"], fill_value=0)
+    tt = t.set_index("abbr")[["gold", "silver", "bronze"]]
+    bad = int((chk.reindex(tt.index, fill_value=0).values != tt.values).any(axis=1).sum())
+    check = ("The medals counted event by event reproduce the official medal table exactly." if bad == 0
+             else f"{bad} school(s) differ between the event-level medals and the medal table, which can happen while results are provisional.")
+    n_prov = int((ev["Status"] != "official").sum()) if (meta["source"] == "api" and "Status" in ev) else None
+    stab = ("The top three places hold under every scoring rule I tried." if stable_k == 3 else
+            f"The top {stable_k} {'place holds' if stable_k == 1 else 'places hold'} under every scoring rule I tried; {_ord(stable_k + 1)} place does not.")
+
+    # ---------- hero ----------
+    updated = meta["generatedAt"][:10] if meta.get("generatedAt") else "November 2026"
+    html(f"""
+    <div class="wg"><div class="wg-rhero"><div class="eyebrow">WAUG 2026 · Results analysis · Obafemi Awolowo University, Ile-Ife</div>
+    <div class="wg-h1">{E(lead.abbr)} won by being everywhere: {int(lead.total)} medals in {int(lq.sports)} sports, but only {_pct(lq.gold_rate)} were gold.</div>
+    <p>I took the results of the 15th West Africa University Games and asked why the medal table looks the way it does, not only what it shows.
+    I tested how concentrated the medals were, whether volume or quality won them, what decided the lead, whether the ranking rule matters and how
+    competitive the team games were. {E(stab)}</p>
+    <div class="wg-kpis">
+    <div class="wg-kpi"><b>{_pct(top3)}</b><span>of all {T} medals went to just three schools</span><small>Results</small></div>
+    <div class="wg-kpi"><b>r = {r_b:.2f}</b><span>link between the sports a school medalled in and its total medals</span><small>Calculated</small></div>
+    <div class="wg-kpi"><b>{ahead} of {ahead + behind + level}</b><span>sports where {E(lead.abbr)} won more medals than {E(run.abbr)}</span><small>Results</small></div>
+    </div></div></div>""")
+    b1, b2, b3, _x = st.columns([1.1, 1.3, 1.3, 2])
+    b1.markdown('<a href="#what-i-did" style="display:inline-block;background:#FFC72C;color:#000080;font-weight:700;padding:.5rem 1rem;border-radius:10px;text-decoration:none">Read the report ↓</a>',
+                unsafe_allow_html=True)
+    b2.page_link(results_page, label="Explore the dashboard", icon="📊")
+    b3.download_button("Download the data", t[["rank", "university", "abbr", "gold", "silver", "bronze", "total"]].to_csv(index=False),
+                       "waug_2026_medal_table.csv", "text/csv")
+    html(f'<div class="wg"><div class="wg-by">By Adelerin Samuel · Data: AlliSports Data API · updated {E(updated)}</div></div>')
+
+    # ---------- in short ----------
+    html('<div class="wg"><div class="wg-h2 big" style="margin-top:2.2rem">In short</div></div>')
+    shorts = [
+        f"{PILL['results']}<b>The medals were concentrated.</b> {E(lead.university)} took {_pct(top1)} of the {T} medals, the top three took {_pct(top3)}, "
+        f"and half of all medals were won by just {k50} school{'s' if k50 != 1 else ''}.",
+        f"{PILL['calc']}<b>Breadth, not conversion.</b> Total medals follow the number of sports a school medalled in (r = {r_b:.2f}). {E(lead.abbr)} led on volume but only "
+        f"{_pct(lq.gold_rate)} of its medals were gold" + (f"; {E(best.abbr)} converted {_pct(best.gold_rate)} of its podiums into gold." if best is not None and best.abbr != lead.abbr else "."),
+        f"{PILL['results']}<b>The lead is broad.</b> {E(lead.abbr)} finished {gap} medals ahead of {E(run.abbr)} and won more medals in {ahead} of {ahead + behind + level} sports"
+        + (f", most of all in {E(top_two)}." if top_two else "."),
+        f"{PILL['calc']}<b>The ranking is {'robust' if stable_k == 3 else 'partly sensitive to the rule'}.</b> {E(stab)} {E(changed)}",
+    ]
+    if not bb.empty:
+        shorts.append(f"{PILL['matches']}<b>Team games.</b> Basketball games had a median margin of {bb.margin.median():.0f} points over {len(bb)} games"
+                      + (f"; {_pct((fb.margin <= 1).mean())} of football games were decided by a goal or less." if not fb.empty else "."))
+    html('<div class="wg"><ul class="wg-short">' + "".join(f"<li>{s}</li>" for s in shorts) + "</ul></div>")
+
+    # ---------- 1. what I did ----------
+    rsec(1, "What I did", "I read the official results, checked them against the medal table, then asked five questions of the data.", anchor="what-i-did")
+    st.write(f"The Games were held on the OAU campus in Ile-Ife from 2 to 12 October 2026. The medal table ranks {n_s} universities but does not say what produced "
+             "that ranking. I took the results straight from the AlliSports Data feed, kept every figure traceable to a recorded result, and judged each finding "
+             "by asking what else could explain it. I keep the official ranking separate from the alternative scoring rules I use as checks.")
+    html(f"""<div class="wg"><div class="wg-stats3">
+    <div class="wg-st"><b>{T}</b><span>Medals analysed</span><small>{len(ev)} events across {n_sports} sports, from the official results.</small></div>
+    <div class="wg-st g"><b>{n_s}</b><span>Medal-winning schools</span><small>Ranked gold first, then silver, then bronze.</small></div>
+    <div class="wg-st n"><b>{len(fin)}</b><span>Finished matches</span><small>Football and basketball from the feed, other sports from a saved snapshot.</small></div></div></div>""")
+    with st.expander("Read more: how I collected and checked the data"):
+        st.markdown("1. **Collected** the medal table, the event results (with the athletes on each podium) and the match scorelines from the AlliSports Data API.\n"
+                    "2. **Filtered** out events that do not count towards the medal table and disputed events, so that totals match the official table.\n"
+                    "3. **Standardised** athlete entries: team events are labelled as such, and entries with no name are marked as not listed.\n"
+                    f"4. **Reconciled** the event-level medals with the medal table. {check}\n"
+                    "5. **Joined** the match data: football and basketball come from the feed, and other sports use a saved snapshot of 5 to 11 October.")
+        if n_prov is not None:
+            st.caption(f"{n_prov} of {len(ev)} events were still provisional when this page was built.")
+
+    # ---------- 2. concentration ----------
+    rsec(2, "How concentrated were the medals?", f"{_pct(top3)} of all medals went to three schools, and the leader alone took {_pct(top1)}.")
+    st.markdown(f"{PILL['results']} {n_s} schools won medals, but the concentration equals only about **{eff:.1f} equally sized schools**. "
+                f"Half of all medals were won by the top {k50} school{'s' if k50 != 1 else ''}.", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        chead("How quickly the medals add up", "Cumulative share of all medals · schools ranked by medals")
+        fig = px.line(cum, x="Rank", y="Cumulative share", markers=True, hover_name="School", color_discrete_sequence=["#FFC72C"])
+        fig.add_hline(y=0.5, line_dash="dot", line_color="#9CA3AF", annotation_text="half of all medals")
+        fig.update_layout(yaxis_tickformat=".0%", xaxis_title="School rank", yaxis_title=None, margin=dict(t=10))
+        st.plotly_chart(fig, width="stretch")
+        rnote(f"The top three hold {_pct(top3)} of medals and the top five {_pct(top5)}.")
+        howto("Each point adds the next school's share of medals to the schools above it. The steeper the start, the more concentrated the medals.")
+    with c2:
+        chead("Who won what", "Medals by type · ten highest-ranked schools")
+        top10 = t.head(10).melt(id_vars="abbr", value_vars=["gold", "silver", "bronze"], var_name="Medal", value_name="Count")
+        top10["Medal"] = top10.Medal.str.capitalize()
+        fig = px.bar(top10, y="abbr", x="Count", color="Medal", orientation="h", color_discrete_map=MEDAL_COLORS,
+                     category_orders={"abbr": t.head(10).abbr.tolist()[::-1], "Medal": ["Gold", "Silver", "Bronze"]})
+        fig.update_layout(yaxis_title=None, legend_title=None, margin=dict(t=10))
+        st.plotly_chart(fig, width="stretch")
+        rnote(f"{E(lead.abbr)} won {int(lead.gold)} gold, {int(lead.silver)} silver and {int(lead.bronze)} bronze; {_pct(lq.gold_rate)} of its medals were gold.")
+        howto("Each bar is one school, split into gold, silver and bronze medals. Longer bars mean more medals in total.")
+
+    # ---------- 3. volume or quality ----------
+    rsec(3, "Did schools win through volume or quality?",
+         f"Volume. Medals track breadth (r = {r_b:.2f}); {E(lead.abbr)} led on totals, not on the share of golds.")
+    st.markdown(f"{PILL['calc']} For every school I compared total medals (volume), the share that were gold (quality) and the number of sports medalled in (breadth). "
+                f"Across the {n_s} schools the correlation between breadth and total medals is **r = {r_b:.2f}**, a {strength} relationship.", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        chead("Volume against quality", "Each bubble is a school · size = sports medalled in")
+        fig = px.scatter(q, x="total", y="gold_rate", size="sports", text="abbr", hover_name="university", color_discrete_sequence=["#6C8CFF"], size_max=32)
+        fig.update_traces(textposition="top center")
+        fig.update_layout(xaxis_title="Total medals", yaxis_title="Share of medals that were gold", yaxis_tickformat=".0%", margin=dict(t=10))
+        st.plotly_chart(fig, width="stretch")
+        rnote(f"{E(lead.abbr)} is far to the right (most medals) but low on the vertical axis ({_pct(lq.gold_rate)} gold).")
+        howto("Right means more medals. Up means a larger share of those medals were gold. Bigger bubbles are schools that medalled in more sports.")
+    with c2:
+        chead("Who turned podiums into gold", "Share of medals that were gold · schools with 10 or more medals")
+        if best is not None:
+            e2 = elig.sort_values("gold_rate")
+            fig = px.bar(e2, y="abbr", x="gold_rate", orientation="h", color_discrete_sequence=["#FFC72C"], text=e2.gold_rate.map(lambda v: f"{v:.0%}"))
+            fig.update_layout(xaxis_tickformat=".0%", xaxis_title=None, yaxis_title=None, margin=dict(t=10))
+            st.plotly_chart(fig, width="stretch")
+            rnote(f"{E(best.abbr)} converted {_pct(best.gold_rate)} of its {int(best.total)} medals into gold.")
+        else:
+            st.caption("No school has 10 or more medals yet.")
+        howto("Each bar is the share of a school's medals that were gold. A high bar means the school won the top step more often.")
+
+    # ---------- 4. what decided the lead ----------
+    rsec(4, f"What decided the lead of {lead.abbr} over {run.abbr}?",
+         f"{ahead} of {ahead + behind + level} sports went to {E(lead.abbr)}, so the {gap}-medal lead is broad, not one big result.")
+    st.markdown(f"{PILL['results']} I counted each school's medals in every sport and subtracted. "
+                + ("The sport-by-sport differences add up exactly to the overall gap. " if adds_up else "")
+                + (f"The biggest contributions came from {E(top_two)}. " if top_two else "")
+                + (f"The host, {E(host.iloc[0].abbr)}, ranked {int(host.iloc[0]['rank'])} with {_pct(host.iloc[0].share)} of all medals." if not host.empty else ""),
+                unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    dd = diff.reset_index()
+    dd.columns = ["Sport", "Difference"]
+    dd["Direction"] = dd.Difference.map(lambda v: f"{lead.abbr} ahead" if v > 0 else (f"{run.abbr} ahead" if v < 0 else "Level"))
+    with c1:
+        chead("Where the gap came from", f"Medals won by {lead.abbr} minus medals won by {run.abbr}")
+        fig = px.bar(dd, x="Sport", y="Difference", color="Direction",
+                     color_discrete_map={f"{lead.abbr} ahead": "#6C8CFF", f"{run.abbr} ahead": "#FFC72C", "Level": "#9CA3AF"})
+        fig.update_layout(xaxis_title=None, legend_title=None, margin=dict(t=10))
+        st.plotly_chart(fig, width="stretch")
+        rnote(f"{E(lead.abbr)} was ahead in {ahead} sports, {E(run.abbr)} in {behind}, and {level} were level.")
+        howto(f"A bar above zero is a sport where {lead.abbr} won more medals than {run.abbr}; below zero is the reverse.")
+    with c2:
+        chead("The two schools side by side", "Medals by sport")
+        both = cnt.loc[[lead.abbr, run.abbr]].T.reset_index().melt(id_vars="sport", var_name="School", value_name="Medals")
+        fig = px.bar(both, x="sport", y="Medals", color="School", barmode="group", color_discrete_sequence=["#6C8CFF", "#FFC72C"])
+        fig.update_layout(xaxis_title=None, legend_title=None, margin=dict(t=10))
+        st.plotly_chart(fig, width="stretch")
+        rnote("The leader's bars are taller in most sports, so the lead does not depend on a single event.")
+        howto("Each pair of bars is one sport. Compare the heights to see which school won more medals there.")
+
+    # ---------- 5. scoring rule ----------
+    rsec(5, "Does the ranking depend on the scoring rule?", stab)
+    st.markdown(f"{PILL['calc']} I re-ranked every school under three alternatives: total medals, a 3-2-1 points system and golds only (ties share a rank). "
+                + (f"{E(changed)} " if changed else "")
+                + (f"{moved3} of {n_s} schools move three or more places under at least one alternative; the largest move is {E(big.abbr)}, "
+                   f"{_ord(big[off])} officially but {_ord(big[bigcol])} by {E(bigcol.lower())}." if big is not None and moved3 else ""), unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        chead("Rank under each rule", "Ten highest-ranked schools")
+        st.dataframe(alt.head(10)[["abbr", off] + alt_cols].rename(columns={"abbr": "School"}), hide_index=True, width="stretch")
+        rnote("Schools that keep the same number across the row are unaffected by the choice of rule.")
+        howto("Each row is a school. Each column is its rank under a different scoring rule. 1 is best.")
+    with c2:
+        chead("How much each school moves", "Rank by scoring rule · lower is better")
+        long = alt.head(10).melt(id_vars="abbr", value_vars=[off] + alt_cols, var_name="Rule", value_name="Rank")
+        fig = px.line(long, x="Rule", y="Rank", color="abbr", markers=True)
+        fig.update_yaxes(autorange="reversed")
+        fig.update_layout(legend_title=None, xaxis_title=None, margin=dict(t=10))
+        st.plotly_chart(fig, width="stretch")
+        rnote("Lines that cross show schools that swap places when the rule changes.")
+        howto("Each line follows one school across the four rules. A flat line means its rank does not change.")
+
+    # ---------- 6. team games ----------
+    rsec(6, "How competitive were the team games?",
+         (f"Basketball games were often one-sided (median margin {bb.margin.median():.0f} points)." if not bb.empty else "There are not enough finished matches yet."))
+    st.markdown(f"{PILL['matches']} For finished football and basketball games I looked at the score margin. Football games level after normal time are shown separately because "
+                "penalties then decide the winner.", unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        if not bb.empty:
+            chead("Basketball margins", f"Points between the teams · {len(bb)} games")
+            fig = px.histogram(bb, x="margin", nbins=10, color_discrete_sequence=["#6C8CFF"])
+            fig.update_layout(xaxis_title="Points margin", yaxis_title="Games", margin=dict(t=10))
+            st.plotly_chart(fig, width="stretch")
+            rnote(f"{_pct((bb.margin >= 20).mean())} of games were decided by 20 points or more.")
+            howto("Each bar counts games with a margin in that range. Bars on the right are one-sided games.")
+    with c2:
+        if not fb.empty:
+            chead("Football margins", f"Goals between the teams · {len(fb)} games")
+            fig = px.histogram(fb, x="margin", nbins=6, color_discrete_sequence=["#FFC72C"])
+            fig.update_layout(xaxis_title="Goals margin", yaxis_title="Games", margin=dict(t=10))
+            st.plotly_chart(fig, width="stretch")
+            rnote(f"{_pct((fb.margin <= 1).mean())} of games were decided by a single goal or were level at full time; {int(fb.pens_a.notna().sum())} went to penalties.")
+            howto("Each bar counts games with that goal margin. A margin of 0 means the game was level after normal time.")
+
+    # ---------- 7. try it yourself ----------
+    rsec(7, "Try it yourself", "Change the points for each medal and see how the top of the table moves.")
+    s1, s2, s3 = st.columns(3)
+    gp = s1.slider("Points for gold", 1, 10, 3, key="rp_g")
+    sp = s2.slider("Points for silver", 0, 10, 2, key="rp_s")
+    bp = s3.slider("Points for bronze", 0, 10, 1, key="rp_b")
+    pts = t.gold * gp + t.silver * sp + t.bronze * bp
+    mine = pd.DataFrame({"School": t.abbr, "Official rank": t["rank"], "Your rank": pts.rank(method="min", ascending=False).astype(int), "Points": pts})
+    mine["Places gained"] = mine["Official rank"] - mine["Your rank"]
+    mine = mine.sort_values(["Your rank", "Official rank"])
+    leaders = ", ".join(mine[mine["Your rank"] == 1].School)
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Leader", leaders)
+    m2.metric("Points for the leader", int(mine.Points.max()))
+    m3.metric("Top 3 same as official", "Yes" if set(mine[mine["Your rank"] <= 3].School) == set(t.head(3).abbr) else "No")
+    m4.metric("Schools moving 3+ places", int((mine["Places gained"].abs() >= 3).sum()))
+    st.dataframe(mine.head(10), hide_index=True, width="stretch")
+
+    # ---------- 8. limits ----------
+    rsec(8, "What this does not show", "The results describe patterns. They cannot prove causes.")
+    st.markdown("- **Association, not cause.** The link between breadth and medals does not show why. Home advantage cannot be tested without data on entries and team sizes.\n"
+                "- **Match analysis is partial.** Only football and basketball come from the feed, and the sample is small.\n"
+                "- **Results can still change.** Provisional results are not confirmed until the WAUG Technical Committee signs them off.\n"
+                "- **Athlete counts are approximate.** Team events list no names and names are spelled in more than one way.")
+
+    # ---------- 9. next steps ----------
+    rsec(9, "What I would do next", "Four changes would make the next analysis much stronger.")
+    st.markdown((f"1. **Show two rankings side by side.** The official gold-first table and a total-medals view differ in {_ord(stable_k + 1)} place, so both tell a reader something.\n"
+                 if stable_k < 3 else "1. **Keep the gold-first table and publish a total-medals view beside it,** so readers can see the ranking holds.\n")
+                + "2. **Record entries per school and per sport.** Without them, medals per entrant (efficiency) cannot be measured.\n"
+                  "3. **Give every athlete an ID.** Counts would no longer depend on how a name is spelled.\n"
+                  "4. **Record team members for team events,** so the athlete analysis can include them.")
+
+    # ---------- 10. who built this ----------
+    rsec(10, "Who built this", "One person built the analysis and the dashboard.")
+    html('<div class="wg"><div class="wg-team"><div class="av">AS</div><div><b>Adelerin Samuel</b><em>Analysis & dashboard</em>'
+         '<p>Collected the data from the AlliSports Data API, built the analysis and designed the dashboard.</p></div></div></div>')
+
+    # ---------- appendix ----------
+    html('<div class="wg"><div class="wg-h2 big">Appendix: method and detail</div></div>')
+    with st.expander("A · What I measured, and why"):
+        st.markdown("- **Medal share:** a school's medals divided by all medals. It shows who holds the medals.\n"
+                    "- **Effective number of schools:** 1 divided by the sum of squared shares. It shows how many equally sized schools would give the same concentration.\n"
+                    "- **Gold rate:** gold medals divided by total medals. It measures quality.\n"
+                    "- **Breadth:** the number of sports a school won at least one medal in.\n"
+                    "- **Correlation (r):** how closely two measures move together, from -1 to 1. It is an association, not a cause.\n"
+                    "- **Rank under a rule:** each school's position when scored by a different rule, with ties sharing a rank.\n"
+                    "- **Margin:** the absolute difference in score between the two teams in a finished game.")
+    with st.expander("B · Decisions and checks"):
+        for a, b in [("Data source", "Results, medals, winners and scorelines come from the AlliSports Data API, which marks results as provisional or official."),
+                     ("Reconciliation", check),
+                     ("Which events count", "Events that do not count towards the medal table, and disputed events, are excluded so totals match the official table."),
+                     ("Ranking rule", "Gold first, then silver, then bronze, with equal medals sharing a rank. It follows the Games' own table and is tested against three alternatives."),
+                     ("Athlete analysis", "Only individual entries are used. Team events list no names, and relays and doubles are excluded."),
+                     ("Draws and penalties", "Draws are counted separately from wins and losses. A game settled on penalties is a win for the shoot-out winner."),
+                     ("Match coverage", "Football and basketball come from the feed. Other sports use a saved snapshot of 5 to 11 October.")]:
+            st.markdown(f"**{a}.** {b}")
+    with st.expander("C · Full limitations"):
+        st.markdown("- The analysis is descriptive. It cannot measure efficiency or prove causes.\n"
+                    "- Medals counted here follow the official table, so events that do not count towards it are not included.\n"
+                    "- Football and basketball come from the live feed. Other sports come from a snapshot of 5 to 11 October, so match analysis is limited to football and basketball.\n"
+                    "- Some results may be provisional and can change.\n"
+                    "- Athlete names are spelled in more than one way in the source, so an athlete's count can be slightly low.\n"
+                    "- The match sample is small, so match findings describe these games and not Games in general.")
+    with st.expander("D · Data sources and coverage"):
+        st.markdown("- **AlliSports Data API** (data.allimediahub.com): medal table, event results with athletes, match scorelines, sports and universities.\n"
+                    f"- **Fetched:** {E(meta['generatedAt'][:16].replace('T', ' ') + ' UTC') if meta.get('generatedAt') else 'from the saved snapshot'}. Responses are cached for about a minute.\n"
+                    "- **Saved snapshot:** match results for 5 to 11 October for sports the feed does not carry, used only to fill those sports.")
+    with st.expander("E · Full medal table"):
+        st.dataframe(t[["rank", "university", "abbr", "gold", "silver", "bronze", "total"]].rename(columns={"rank": "Rank", "university": "University", "abbr": "Code"}),
+                     hide_index=True, width="stretch")
+    with st.expander("F · Ranking under every rule"):
+        st.dataframe(alt[["abbr", "university", off] + alt_cols].rename(columns={"abbr": "Code", "university": "University"}), hide_index=True, width="stretch")
+
+    html(f"""<div class="wg"><div class="wg-fine">
+    <b>WAUG 2026 results report:</b> analysis of the medal table and match results of the 15th West Africa University Games, Obafemi Awolowo University, Ile-Ife.<br>
+    <b>Built and researched by:</b> Adelerin Samuel.<br>
+    <b>Data:</b> AlliSports Data API (data.allimediahub.com). Provisional results are not yet confirmed by the WAUG Technical Committee.<br>
+    Analysis in Python (pandas); dashboard built with Streamlit and Plotly.</div></div>""")
+
+
+def data_page():
+    html(HOME_CSS)
+    html(ABOUT_CSS)
+    html("""<div class="wg"><div class="wg-band"><span class="wg-eyebrow">Data</span>
+    <div class="wg-h1">The data behind the report</div></div>
+    <div class="wg-lead">Every figure in the report comes from the files below. Download them to check the numbers or run your own analysis.</div></div>""")
+    try:
+        table, det, ev, meta = load()
+        mt = load_matches()[0]
+    except Exception as err:
+        st.error(f"Could not load the data: {err}")
+        return
+    t = table.sort_values("rank")
+    sets = [("Medal table", t[["rank", "university", "abbr", "gold", "silver", "bronze", "total"]], "waug_2026_medal_table.csv"),
+            ("Every medal", det.assign(medal=det.medal.astype(str))[["university", "abbr", "medal", "sport", "event", "athlete"]], "waug_2026_medals.csv"),
+            ("Event winners", build_winners(det), "waug_2026_event_winners.csv"),
+            ("Matches", mt, "waug_2026_matches.csv")]
+    for col, (name, df, fn) in zip(st.columns(len(sets)), sets):
+        col.metric(name, f"{len(df):,} rows")
+        col.download_button(f"Download {name.lower()}", df.to_csv(index=False), fn, "text/csv", key=f"dl_{fn}")
+    section("Data dictionary", "What each column means")
+    dd = {"Medal table": [("rank", "Official rank, gold first then silver then bronze"), ("university / abbr", "University name and short code"),
+                          ("gold, silver, bronze, total", "Medal counts")],
+          "Every medal": [("university / abbr", "Winning university"), ("medal", "Gold, Silver or Bronze"), ("sport / event", "Sport and event"),
+                          ("athlete", "Athlete name, 'Team' for team events, or a dash when no name is listed")],
+          "Event winners": [("sport / category / event", "Sport, Men/Women/Mixed and event name"), ("gold / silver / bronze", "Winners as 'Name (CODE)'; two bronzes are separated by a semicolon")],
+          "Matches": [("date / time", "Date and time in Nigeria time (WAT)"), ("sport / category / stage", "Sport, Men/Women/Mixed and stage of the competition"),
+                      ("team_a / team_b, score_a / score_b", "The two sides and their scores"), ("sets", "Set, quarter or half-time scores"),
+                      ("pens_a / pens_b", "Penalty shoot-out scores when used"), ("winner / status", "A or B, and finished, live or scheduled")]}
+    for name, rows in dd.items():
+        with st.expander(name):
+            st.dataframe(pd.DataFrame(rows, columns=["Column", "Meaning"]), hide_index=True, width="stretch")
+    section("Sources and coverage", "Where the data comes from")
+    st.markdown("- **AlliSports Data API** (data.allimediahub.com): medal table, results with athletes, football and basketball matches, sports and universities.\n"
+                "- **Saved snapshot:** match results for 5 to 11 October for sports the feed does not carry.\n"
+                f"- **Last fetched:** {meta['generatedAt'][:16].replace('T', ' ') + ' UTC' if meta.get('generatedAt') else 'from the saved snapshot'}.\n"
+                "- Provisional results are not yet confirmed by the WAUG Technical Committee.")
+    st.caption("Data: AlliSports Data.")
+
+
 def results():
     try:
         table, det, ev, meta = load()
@@ -940,11 +1391,13 @@ def results():
 
 
 # ---------- navigation ----------
-home_page = st.Page(home, title="Home", icon="🏠", default=True)
-results_page = st.Page(results, title="Results Dashboard", icon="🏅", url_path="results")
+report_page = st.Page(report, title="Report", icon="📄", default=True)
+overview_page = st.Page(overview, title="Games overview", icon="🏟️", url_path="overview")
+data_page_ = st.Page(data_page, title="Data", icon="🗂️", url_path="data")
+results_page = st.Page(results, title="Dashboard", icon="📊", url_path="results")
 about_page = st.Page(about, title="About", icon="ℹ️", url_path="about")
 try:
-    nav = st.navigation([home_page, results_page, about_page], position="top")
+    nav = st.navigation([report_page, results_page, overview_page, data_page_, about_page], position="top")
 except TypeError:  # older Streamlit: navigation goes in the sidebar
-    nav = st.navigation([home_page, results_page, about_page])
+    nav = st.navigation([report_page, results_page, overview_page, data_page_, about_page])
 nav.run()
